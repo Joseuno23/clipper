@@ -4,9 +4,11 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { AppProviders } from "@/app/AppProviders";
 import { createTestRouter } from "@/router";
+import { clearAuthSession, saveAuthSession } from "@/shared/api/auth";
 
 afterEach(() => {
   cleanup();
+  clearAuthSession();
 });
 
 function renderRoute(path: string) {
@@ -18,17 +20,44 @@ function renderRoute(path: string) {
 }
 
 describe("React Router route behavior", () => {
-  it("redirects the index route to the dashboard", async () => {
+  it("redirects unauthenticated dashboard visits to login", async () => {
+    renderRoute("/dashboard");
+
+    expect(
+      await screen.findByRole("heading", { name: "Bienvenido de vuelta" }),
+    ).toBeInTheDocument();
+  });
+
+  it("redirects unauthenticated index visits to login", async () => {
     renderRoute("/");
+
+    expect(
+      await screen.findByRole("heading", { name: "Bienvenido de vuelta" }),
+    ).toBeInTheDocument();
+  });
+
+  it("allows authenticated dashboard visits", async () => {
+    saveAuthSession({ token: "jwt_1", shopSlug: "niche-72" });
+
+    renderRoute("/dashboard");
 
     expect(
       await screen.findByRole("heading", { name: "Buenos días, Sofía" }),
     ).toBeInTheDocument();
   });
 
+  it.each([["/login", "Bienvenido de vuelta"]])(
+    "renders %s through React Router",
+    async (path, expectedText) => {
+      renderRoute(path);
+
+      expect(
+        await screen.findByRole("heading", { name: expectedText }),
+      ).toBeInTheDocument();
+    },
+  );
+
   it.each([
-    ["/login", "Bienvenido de vuelta"],
-    ["/dashboard", "Buenos días, Sofía"],
     ["/appointments", "Citas"],
     ["/queue", "Colas en vivo"],
     ["/sales", "Caja"],
@@ -38,7 +67,8 @@ describe("React Router route behavior", () => {
     ["/staff", "Staff"],
     ["/reports", "Reportes"],
     ["/settings", "Configuración"],
-  ])("renders %s through React Router", async (path, expectedText) => {
+  ])("renders authenticated private route %s", async (path, expectedText) => {
+    saveAuthSession({ token: "jwt_1", shopSlug: "niche-72" });
     renderRoute(path);
 
     expect(

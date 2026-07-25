@@ -42,3 +42,4 @@ src/generated/prisma/
 *.njsproj
 *.sln
 *.sw?
+.vercel

@@ -6,6 +6,7 @@ import {
   type RouteObject,
 } from "react-router";
 
+import { RequireAuth } from "@/app/routes/RequireAuth";
 import { NotFoundPage, RouteErrorBoundary } from "@/app/routes/RouteFallbacks";
 import { AppointmentsPage } from "@/routes/appointments";
 import { CustomersPage } from "@/routes/customers";
@@ -24,18 +25,23 @@ export const appRoutes: RouteObject[] = [
     path: "/",
     errorElement: <RouteErrorBoundary />,
     children: [
-      { index: true, element: <Navigate to="/dashboard" replace /> },
       { path: "login", element: <LoginPage /> },
-      { path: "dashboard", element: <DashboardPage /> },
-      { path: "appointments", element: <AppointmentsPage /> },
-      { path: "queue", element: <QueuePage /> },
-      { path: "sales", element: <SalesPage /> },
-      { path: "customers", element: <CustomersPage /> },
-      { path: "services", element: <ServicesPage /> },
-      { path: "products", element: <ProductsPage /> },
-      { path: "staff", element: <StaffPage /> },
-      { path: "reports", element: <ReportsPage /> },
-      { path: "settings", element: <SettingsPage /> },
+      {
+        element: <RequireAuth />,
+        children: [
+          { index: true, element: <Navigate to="/dashboard" replace /> },
+          { path: "dashboard", element: <DashboardPage /> },
+          { path: "appointments", element: <AppointmentsPage /> },
+          { path: "queue", element: <QueuePage /> },
+          { path: "sales", element: <SalesPage /> },
+          { path: "customers", element: <CustomersPage /> },
+          { path: "services", element: <ServicesPage /> },
+          { path: "products", element: <ProductsPage /> },
+          { path: "staff", element: <StaffPage /> },
+          { path: "reports", element: <ReportsPage /> },
+          { path: "settings", element: <SettingsPage /> },
+        ],
+      },
       { path: "*", element: <NotFoundPage /> },
     ],
   },
