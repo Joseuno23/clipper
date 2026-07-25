@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { RouterProvider } from "react-router";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "@/app/AppProviders";
 import { createTestRouter } from "@/router";
@@ -9,6 +9,7 @@ import { clearAuthSession, saveAuthSession } from "@/shared/api/auth";
 afterEach(() => {
   cleanup();
   clearAuthSession();
+  vi.unstubAllGlobals();
 });
 
 function renderRoute(path: string) {
@@ -69,6 +70,10 @@ describe("React Router route behavior", () => {
     ["/settings", "Configuración"],
   ])("renders authenticated private route %s", async (path, expectedText) => {
     saveAuthSession({ token: "jwt_1", shopSlug: "niche-72" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ ok: true, data: [] })),
+    );
     renderRoute(path);
 
     expect(
