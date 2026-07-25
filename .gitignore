@@ -25,6 +25,9 @@ dist-ssr
 # Local tooling / generated agent metadata
 .atl/
 
+# Generated Prisma client
+src/generated/prisma/
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
