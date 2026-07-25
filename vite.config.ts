@@ -37,22 +37,22 @@ function localApiPlugin(): PluginOption {
             return;
           }
 
-          const apiModulePath = getApiModulePath(request.url);
+          const apiRoute = getApiRoute(request.url);
 
-          if (!apiModulePath) {
+          if (!apiRoute) {
             next();
             return;
           }
 
           try {
-            const apiModule = await server.ssrLoadModule(apiModulePath);
+            const apiModule = await server.ssrLoadModule(apiRoute.modulePath);
             const handler = apiModule.default as (
               request: VercelRequest,
               response: VercelResponse,
             ) => Promise<void> | void;
 
             await handler(
-              await createLocalVercelRequest(request),
+              await createLocalVercelRequest(request, apiRoute.params),
               createLocalVercelResponse(response),
             );
           } catch (error) {
@@ -64,7 +64,12 @@ function localApiPlugin(): PluginOption {
   };
 }
 
-function getApiModulePath(url: string) {
+type ApiRoute = {
+  modulePath: string;
+  params: Record<string, string>;
+};
+
+function getApiRoute(url: string): ApiRoute | null {
   const { pathname } = new URL(url, "http://localhost");
   const relativePath = pathname.replace(/^\/api\//, "");
 
@@ -72,17 +77,54 @@ function getApiModulePath(url: string) {
     return null;
   }
 
-  const apiModulePath = path.resolve(__dirname, "api", `${relativePath}.ts`);
+  const exactModulePath = path.resolve(__dirname, "api", `${relativePath}.ts`);
 
-  return existsSync(apiModulePath) ? apiModulePath : null;
+  if (existsSync(exactModulePath)) {
+    return { modulePath: exactModulePath, params: {} };
+  }
+
+  const segments = relativePath.split("/").filter(Boolean);
+
+  if (segments.length === 1) {
+    const indexModulePath = path.resolve(
+      __dirname,
+      "api",
+      segments[0],
+      "index.ts",
+    );
+
+    return existsSync(indexModulePath)
+      ? { modulePath: indexModulePath, params: {} }
+      : null;
+  }
+
+  if (segments.length === 2) {
+    const dynamicModulePath = path.resolve(
+      __dirname,
+      "api",
+      segments[0],
+      "[id].ts",
+    );
+
+    return existsSync(dynamicModulePath)
+      ? { modulePath: dynamicModulePath, params: { id: segments[1] } }
+      : null;
+  }
+
+  return null;
 }
 
-async function createLocalVercelRequest(request: IncomingMessage) {
+async function createLocalVercelRequest(
+  request: IncomingMessage,
+  params: Record<string, string> = {},
+) {
+  const searchParams = Object.fromEntries(
+    new URL(request.url ?? "/", "http://localhost").searchParams,
+  );
+
   return Object.assign(request, {
     body: await readJsonBody(request),
-    query: Object.fromEntries(
-      new URL(request.url ?? "/", "http://localhost").searchParams,
-    ),
+    query: { ...searchParams, ...params },
     cookies: {},
   }) as VercelRequest;
 }
