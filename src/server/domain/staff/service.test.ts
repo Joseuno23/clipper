@@ -5,7 +5,11 @@ import { ApiError } from "../../api/errors";
 import type { StaffRole } from "../../../generated/prisma/enums";
 import { createStaffService } from "./service";
 import { parseStaffCreateInput, parseStaffUpdateInput } from "./validation";
-import type { StaffRecord, StaffRepository } from "./types";
+import type {
+  NormalizedStaffServiceCommissionInput,
+  StaffRecord,
+  StaffRepository,
+} from "./types";
 
 const baseContext = {
   user: {
@@ -63,6 +67,18 @@ function createRecord(overrides: Partial<StaffRecord> = {}): StaffRecord {
         createdAt: now,
       },
     ],
+    serviceCommissions: [
+      {
+        id: "commission_1",
+        staffMemberId: "staff_1",
+        serviceId: "service_1",
+        barberShopId: "shop_1",
+        commissionMode: "PERCENTAGE_BPS",
+        commissionValue: { toString: () => "1500.00" },
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
     ...overrides,
   };
 }
@@ -94,6 +110,7 @@ function createRepository(): StaffRepository {
           role,
           createdAt: now,
         })),
+        serviceCommissions: data.serviceCommissions.map(toCommissionRecord),
       }),
     ),
     findActiveById: vi.fn(async () => createRecord()),
@@ -109,11 +126,27 @@ function createRepository(): StaffRepository {
             role,
             createdAt: now,
           })) ?? createRecord().roles,
+        serviceCommissions:
+          data.serviceCommissions?.map(toCommissionRecord) ??
+          createRecord().serviceCommissions,
       }),
     ),
     softDelete: vi.fn(async ({ deletedAt }) =>
       createRecord({ deletedAt, isActive: false }),
     ),
+  };
+}
+
+function toCommissionRecord(commission: NormalizedStaffServiceCommissionInput) {
+  return {
+    id: `commission_${commission.serviceId}`,
+    staffMemberId: "staff_1",
+    barberShopId: "shop_1",
+    serviceId: commission.serviceId,
+    commissionMode: commission.commissionMode,
+    commissionValue: { toString: () => commission.commissionValue },
+    createdAt: now,
+    updatedAt: now,
   };
 }
 
@@ -150,6 +183,13 @@ describe("staff service", () => {
       restDays: ["2026-02-01T00:00:00.000Z"],
       specialties: [" Fade ", "Color", "Fade"],
       roles: ["STYLIST", "BARBER", "BARBER"],
+      serviceCommissions: [
+        {
+          serviceId: " service_1 ",
+          commissionMode: "PERCENTAGE_BPS",
+          commissionValue: "1500",
+        },
+      ],
     });
 
     const created = await service.create(baseContext, data);
@@ -168,12 +208,26 @@ describe("staff service", () => {
         workingDays: [1, 5],
         specialties: ["Color", "Fade"],
         roles: ["BARBER", "STYLIST"],
+        serviceCommissions: [
+          {
+            serviceId: "service_1",
+            commissionMode: "PERCENTAGE_BPS",
+            commissionValue: "1500.00",
+          },
+        ],
       }),
     });
     expect(created).toEqual(
       expect.objectContaining({
         commissionValue: "2500.00",
         roles: ["BARBER", "STYLIST"],
+        serviceCommissions: [
+          {
+            serviceId: "service_1",
+            commissionMode: "PERCENTAGE_BPS",
+            commissionValue: "1500.00",
+          },
+        ],
         restDays: ["2026-02-01T00:00:00.000Z"],
         createdAt: now.toISOString(),
       }),

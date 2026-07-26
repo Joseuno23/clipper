@@ -1,66 +1,47 @@
-import { Armchair, User, Users } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Armchair, Plus, User, Users } from "lucide-react";
+
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { StatusBadge } from "@/shared/components/StatusBadge";
-import { staff, customers } from "@/entities/mock-data";
+import {
+  AdminCrudApiError,
+  adminCrudKeys,
+  customersApi,
+  servicesApi,
+  staffApi,
+  type CustomerDto,
+  type ServiceDto,
+  type StaffDto,
+} from "@/shared/api/adminCrud";
+import {
+  queueApi,
+  queueKeys,
+  type QueueStatus,
+  type QueueTicketDto,
+  type StaffQueueDto,
+} from "@/shared/api/queue";
 import { cn } from "@/lib/utils";
 
-type Slot = { occupied: boolean; customerName?: string; waitMin?: number };
-
-interface BarberQueue {
-  staffId: string;
-  chair: Slot;
-  waiting: Slot[];
-}
-
-const SLOTS_PER_QUEUE = 5;
-
-// Mock queues per active barber
-const queues: BarberQueue[] = [
-  {
-    staffId: "s1",
-    chair: { occupied: true, customerName: customers[0].name, waitMin: 12 },
-    waiting: [
-      { occupied: true, customerName: customers[1].name, waitMin: 8 },
-      { occupied: true, customerName: customers[4].name, waitMin: 3 },
-      { occupied: false },
-      { occupied: false },
-      { occupied: false },
-    ],
-  },
-  {
-    staffId: "s2",
-    chair: { occupied: true, customerName: customers[2].name, waitMin: 25 },
-    waiting: [
-      { occupied: true, customerName: customers[5].name, waitMin: 10 },
-      { occupied: false },
-      { occupied: false },
-      { occupied: false },
-      { occupied: false },
-    ],
-  },
-  {
-    staffId: "s3",
-    chair: { occupied: false },
-    waiting: [
-      { occupied: true, customerName: customers[1].name, waitMin: 2 },
-      { occupied: false },
-      { occupied: false },
-      { occupied: false },
-      { occupied: false },
-    ],
-  },
-  {
-    staffId: "s4",
-    chair: { occupied: false },
-    waiting: [
-      { occupied: false },
-      { occupied: false },
-      { occupied: false },
-      { occupied: false },
-      { occupied: false },
-    ],
-  },
-];
+const PAGE_SIZE = 100;
 
 function initials(name: string) {
   return name
@@ -71,8 +52,9 @@ function initials(name: string) {
     .toUpperCase();
 }
 
-function ChairSlot({ slot }: { slot: Slot }) {
-  const occupied = slot.occupied;
+function ChairSlot({ ticket }: { ticket?: QueueTicketDto }) {
+  const occupied = ticket !== undefined;
+
   return (
     <div
       className={cn(
@@ -81,11 +63,11 @@ function ChairSlot({ slot }: { slot: Slot }) {
           ? "border-destructive/30 bg-destructive/10 text-destructive shadow-[inset_0_0_0_1px_oklch(from_var(--destructive)_l_c_h_/_0.15)]"
           : "border-success/30 bg-success/10 text-success",
       )}
-      title={occupied ? `Ocupada · ${slot.customerName}` : "Silla libre"}
+      title={occupied ? `Atendiendo · ${ticket.clientName}` : "Silla libre"}
     >
       <Armchair className="h-9 w-9" strokeWidth={1.6} />
       <span className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em]">
-        {occupied ? "Ocupada" : "Libre"}
+        {occupied ? "Atendiendo" : "Libre"}
       </span>
       <span
         className={cn(
@@ -97,82 +79,144 @@ function ChairSlot({ slot }: { slot: Slot }) {
   );
 }
 
-function WaitSlot({ slot, position }: { slot: Slot; position: number }) {
-  const occupied = slot.occupied;
+function WaitTicket({ ticket }: { ticket: QueueTicketDto }) {
   return (
-    <div className="flex flex-col items-center gap-1.5">
+    <div className="flex min-w-[92px] flex-col items-center gap-1.5">
       <div
-        className={cn(
-          "relative flex h-12 w-12 items-center justify-center rounded-xl border transition-all",
-          occupied
-            ? "border-destructive/30 bg-destructive/10 text-destructive"
-            : "border-border bg-surface text-muted-foreground/50",
-        )}
-        title={
-          occupied ? `${slot.customerName} · ${slot.waitMin}m` : "Disponible"
-        }
+        className="relative flex h-12 w-12 items-center justify-center rounded-xl border border-destructive/30 bg-destructive/10 text-destructive transition-all"
+        title={`${ticket.clientName} · ${ticket.serviceName ?? "Sin servicio"}`}
       >
         <User className="h-5 w-5" strokeWidth={1.8} />
       </div>
       <span className="text-[10px] font-medium tabular-nums text-muted-foreground/70">
-        {position}
+        #{ticket.queuePosition ?? "—"}
+      </span>
+      <span className="max-w-[92px] truncate text-[11px] font-medium text-foreground">
+        {ticket.clientName}
       </span>
     </div>
   );
 }
 
-function QueueRow({ q }: { q: BarberQueue }) {
-  const barber = staff.find((s) => s.id === q.staffId)!;
-  const occupiedCount =
-    (q.chair.occupied ? 1 : 0) + q.waiting.filter((w) => w.occupied).length;
-  const total = 1 + q.waiting.length;
+function QueueRow({
+  queue,
+  staffOptions,
+  onMoveTicket,
+  onUpdateStatus,
+  isUpdating,
+}: {
+  queue: StaffQueueDto;
+  staffOptions: StaffOption[];
+  onMoveTicket: (ticket: QueueTicketDto, staffMemberId: string) => void;
+  onUpdateStatus: (ticket: QueueTicketDto, queueStatus: QueueStatus) => void;
+  isUpdating: boolean;
+}) {
+  const chairTicket = queue.tickets.find(
+    (ticket) => ticket.queueStatus === "IN_SERVICE",
+  );
+  const waitingTickets = queue.tickets.filter(
+    (ticket) => ticket.queueStatus !== "IN_SERVICE",
+  );
 
   return (
     <div className="rounded-2xl border border-border bg-card p-5 transition-colors hover:border-border/80">
-      <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
-        {/* Barber identity */}
+      <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex items-center gap-4">
-          <div
-            className="flex h-14 w-14 items-center justify-center rounded-full text-sm font-semibold text-white ring-2 ring-border"
-            style={{ backgroundColor: barber.avatarColor }}
-          >
-            {initials(barber.name)}
+          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground ring-2 ring-border">
+            {initials(queue.staffName)}
           </div>
           <div className="min-w-0">
             <p className="font-display text-base font-semibold text-foreground">
-              {barber.name}
+              {queue.staffName}
             </p>
             <p className="text-xs text-muted-foreground">
-              {barber.role === "SPECIALIST" ? "Especialista" : "Barbero"} ·{" "}
-              {barber.specialties.join(" · ") || "—"}
+              {queue.roles.join(" · ") || "Staff"} ·{" "}
+              {queue.specialties.join(" · ") || "Sin especialidades"}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {queue.inServiceCount} en silla · {queue.waitingCount} esperando
             </p>
           </div>
         </div>
 
-        {/* Queue visualization */}
         <div className="flex items-center gap-4 overflow-x-auto">
-          <ChairSlot slot={q.chair} />
+          <ChairSlot ticket={chairTicket} />
           <div className="h-px w-6 bg-border" aria-hidden />
-          <div className="flex items-end gap-2.5">
-            {q.waiting.slice(0, SLOTS_PER_QUEUE).map((slot, i) => (
-              <WaitSlot key={i} slot={slot} position={i + 1} />
-            ))}
+          <div className="flex items-start gap-2.5">
+            {waitingTickets.length > 0 ? (
+              waitingTickets.map((ticket) => (
+                <WaitTicket key={ticket.id} ticket={ticket} />
+              ))
+            ) : (
+              <p className="min-w-32 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-center text-xs text-muted-foreground">
+                Sin turnos esperando
+              </p>
+            )}
           </div>
         </div>
 
-        {/* Stats */}
-        <div className="flex items-center gap-3">
-          <div className="rounded-lg border border-border bg-surface px-3 py-2 text-right">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-              Ocupación
-            </p>
-            <p className="font-display text-base font-semibold tabular-nums text-foreground">
-              {occupiedCount}/{total}
-            </p>
+        <div className="flex flex-col gap-2 xl:min-w-64">
+          <div className="flex items-center gap-3 xl:justify-end">
+            <div className="rounded-lg border border-border bg-surface px-3 py-2 text-right">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                Turnos
+              </p>
+              <p className="font-display text-base font-semibold tabular-nums text-foreground">
+                {queue.totalActiveCount}
+              </p>
+            </div>
+            <StatusBadge tone={chairTicket ? "destructive" : "success"}>
+              {chairTicket ? "Atendiendo" : "Disponible"}
+            </StatusBadge>
           </div>
-          <StatusBadge tone={q.chair.occupied ? "destructive" : "success"}>
-            {q.chair.occupied ? "Atendiendo" : "Disponible"}
-          </StatusBadge>
+
+          {queue.tickets.map((ticket) => (
+            <div key={ticket.id} className="flex items-center gap-2 text-xs">
+              <span className="min-w-0 flex-1 truncate">
+                {ticket.clientName} · {ticket.serviceName ?? "Sin servicio"}
+              </span>
+              {ticket.queueStatus === "WAITING" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={isUpdating}
+                  onClick={() => onUpdateStatus(ticket, "IN_SERVICE")}
+                >
+                  Pasar
+                </Button>
+              )}
+              {ticket.queueStatus === "IN_SERVICE" && (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={isUpdating}
+                  onClick={() => onUpdateStatus(ticket, "SERVED")}
+                >
+                  Servido
+                </Button>
+              )}
+              <Select
+                value={ticket.staffMemberId ?? undefined}
+                onValueChange={(staffMemberId) =>
+                  onMoveTicket(ticket, staffMemberId)
+                }
+                disabled={isUpdating}
+              >
+                <SelectTrigger className="h-8 w-36">
+                  <SelectValue placeholder="Mover a" />
+                </SelectTrigger>
+                <SelectContent>
+                  {staffOptions.map((staff) => (
+                    <SelectItem key={staff.id} value={staff.id}>
+                      {staff.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -180,18 +224,64 @@ function QueueRow({ q }: { q: BarberQueue }) {
 }
 
 export function QueueView() {
-  const totalOccupied = queues.reduce(
-    (acc, q) =>
-      acc +
-      (q.chair.occupied ? 1 : 0) +
-      q.waiting.filter((w) => w.occupied).length,
-    0,
+  const queryClient = useQueryClient();
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const queuesQuery = useQuery({
+    queryKey: queueKeys.live,
+    queryFn: queueApi.live,
+  });
+  const customersQuery = useQuery({
+    queryKey: adminCrudKeys.customersList({ limit: PAGE_SIZE, offset: 0 }),
+    queryFn: () => customersApi.list({ limit: PAGE_SIZE, offset: 0 }),
+  });
+  const servicesQuery = useQuery({
+    queryKey: adminCrudKeys.servicesList({ limit: PAGE_SIZE, offset: 0 }),
+    queryFn: () => servicesApi.list({ limit: PAGE_SIZE, offset: 0 }),
+  });
+  const staffQuery = useQuery({
+    queryKey: adminCrudKeys.staffList({ limit: PAGE_SIZE, offset: 0 }),
+    queryFn: () => staffApi.list({ limit: PAGE_SIZE, offset: 0 }),
+  });
+
+  const refreshQueue = () =>
+    queryClient.invalidateQueries({ queryKey: queueKeys.live });
+
+  const createMutation = useMutation({
+    mutationFn: queueApi.createWalkIn,
+    onSuccess: async () => {
+      setIsDialogOpen(false);
+      setFormError(null);
+      await refreshQueue();
+    },
+    onError: (error) => setFormError(errorMessage(error)),
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: ({
+      id,
+      ...input
+    }: {
+      id: string;
+      staffMemberId?: string;
+      queueStatus?: QueueStatus;
+    }) => queueApi.updateTicket(id, input),
+    onSuccess: async () => refreshQueue(),
+  });
+
+  const queues = queuesQuery.data?.queues ?? [];
+  const staffOptions = useMemo(
+    () =>
+      (staffQuery.data ?? []).map((staff) => ({
+        id: staff.id,
+        name: staff.displayName,
+      })),
+    [staffQuery.data],
   );
-  const totalWaiting = queues.reduce(
-    (acc, q) => acc + q.waiting.filter((w) => w.occupied).length,
-    0,
-  );
-  const chairsFree = queues.filter((q) => !q.chair.occupied).length;
+  const totalWaiting = queues.reduce((acc, q) => acc + q.waitingCount, 0);
+  const totalActive = queues.reduce((acc, q) => acc + q.totalActiveCount, 0);
+  const chairsFree = queues.filter((q) => q.inServiceCount === 0).length;
 
   return (
     <>
@@ -200,57 +290,292 @@ export function QueueView() {
         title="Colas en vivo"
         description="Estado actual de cada barbero, silla de atención y posiciones en espera."
         actions={
-          <div className="flex items-center gap-4 text-xs">
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <span className="h-2 w-2 rounded-full bg-success" /> Libre
-            </span>
-            <span className="inline-flex items-center gap-1.5 text-muted-foreground">
-              <span className="h-2 w-2 rounded-full bg-destructive" /> Ocupado
-            </span>
-          </div>
+          <Button
+            size="sm"
+            className="gap-1.5"
+            onClick={() => {
+              setFormError(null);
+              setIsDialogOpen(true);
+            }}
+          >
+            <Plus className="h-4 w-4" />
+            Nuevo turno
+          </Button>
         }
       />
 
       <div className="grid gap-3 sm:grid-cols-3">
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Personas en cola
-          </p>
-          <p className="mt-1 font-display text-2xl font-semibold tabular-nums">
-            {totalWaiting}
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Sillas libres
-          </p>
-          <p className="mt-1 font-display text-2xl font-semibold tabular-nums text-success">
-            {chairsFree}
-          </p>
-        </div>
-        <div className="rounded-xl border border-border bg-card p-4">
-          <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-            Capacidad usada
-          </p>
-          <p className="mt-1 font-display text-2xl font-semibold tabular-nums">
-            {totalOccupied}
-            <span className="text-base text-muted-foreground">
-              /{queues.length * (1 + SLOTS_PER_QUEUE)}
-            </span>
-          </p>
-        </div>
+        <Metric label="Personas esperando" value={totalWaiting} />
+        <Metric label="Sillas libres" value={chairsFree} tone="success" />
+        <Metric label="Turnos activos" value={totalActive} />
       </div>
 
-      <div className="space-y-3">
-        {queues.map((q) => (
-          <QueueRow key={q.staffId} q={q} />
-        ))}
-      </div>
+      {queuesQuery.isLoading ? (
+        <StateCard title="Cargando colas" />
+      ) : queuesQuery.isError ? (
+        <StateCard
+          title="No se pudieron cargar las colas"
+          description={errorMessage(queuesQuery.error)}
+        />
+      ) : queues.length === 0 ? (
+        <StateCard title="No hay staff activo para mostrar" />
+      ) : (
+        <div className="space-y-3">
+          {queues.map((queue) => (
+            <QueueRow
+              key={queue.staffId}
+              queue={queue}
+              staffOptions={staffOptions}
+              isUpdating={updateMutation.isPending}
+              onMoveTicket={(ticket, staffMemberId) => {
+                if (staffMemberId === ticket.staffMemberId) return;
+                updateMutation.mutate({ id: ticket.id, staffMemberId });
+              }}
+              onUpdateStatus={(ticket, queueStatus) =>
+                updateMutation.mutate({ id: ticket.id, queueStatus })
+              }
+            />
+          ))}
+        </div>
+      )}
 
       <div className="flex items-center gap-2 pt-2 text-xs text-muted-foreground">
         <Users className="h-3.5 w-3.5" />
         Mostrando {queues.length} barberos activos
       </div>
+
+      <NewWalkInDialog
+        open={isDialogOpen}
+        customers={customersQuery.data ?? []}
+        services={servicesQuery.data ?? []}
+        staff={staffQuery.data ?? []}
+        error={formError}
+        isSubmitting={createMutation.isPending}
+        isLoading={
+          customersQuery.isLoading ||
+          servicesQuery.isLoading ||
+          staffQuery.isLoading
+        }
+        onOpenChange={setIsDialogOpen}
+        onSubmit={(input) => createMutation.mutate(input)}
+      />
     </>
   );
+}
+
+type StaffOption = { id: string; name: string };
+
+function NewWalkInDialog({
+  open,
+  customers,
+  services,
+  staff,
+  error,
+  isSubmitting,
+  isLoading,
+  onOpenChange,
+  onSubmit,
+}: {
+  open: boolean;
+  customers: CustomerDto[];
+  services: ServiceDto[];
+  staff: StaffDto[];
+  error: string | null;
+  isSubmitting: boolean;
+  isLoading: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (input: {
+    clientId: string;
+    serviceId: string;
+    staffMemberId: string;
+  }) => void;
+}) {
+  const [clientId, setClientId] = useState("");
+  const [serviceId, setServiceId] = useState("");
+  const [staffMemberId, setStaffMemberId] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setClientId("");
+    setServiceId("");
+    setStaffMemberId("");
+    setLocalError(null);
+  }, [open]);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!clientId || !serviceId || !staffMemberId) {
+      setLocalError(
+        "Seleccioná cliente, servicio y staff para crear el turno.",
+      );
+      return;
+    }
+
+    setLocalError(null);
+    onSubmit({ clientId, serviceId, staffMemberId });
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <DialogHeader>
+            <DialogTitle>Nuevo turno walk-in</DialogTitle>
+            <DialogDescription>
+              Elegí un cliente existente, el servicio y el staff preferido.
+            </DialogDescription>
+          </DialogHeader>
+
+          {(localError ?? error) && (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {localError ?? error}
+            </p>
+          )}
+
+          <SelectField
+            label="Cliente"
+            value={clientId}
+            placeholder={
+              isLoading ? "Cargando clientes…" : "Seleccionar cliente"
+            }
+            disabled={isSubmitting || isLoading}
+            onValueChange={setClientId}
+            items={customers.map((customer) => ({
+              value: customer.id,
+              label: `${customer.firstName} ${customer.lastName}`,
+            }))}
+          />
+          <SelectField
+            label="Servicio"
+            value={serviceId}
+            placeholder={
+              isLoading ? "Cargando servicios…" : "Seleccionar servicio"
+            }
+            disabled={isSubmitting || isLoading}
+            onValueChange={setServiceId}
+            items={services.map((service) => ({
+              value: service.id,
+              label: `${service.name} · ${service.durationMinutes}m`,
+            }))}
+          />
+          <SelectField
+            label="Staff preferido"
+            value={staffMemberId}
+            placeholder={isLoading ? "Cargando staff…" : "Seleccionar staff"}
+            disabled={isSubmitting || isLoading}
+            onValueChange={setStaffMemberId}
+            items={staff.map((member) => ({
+              value: member.id,
+              label: member.displayName,
+            }))}
+          />
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSubmitting}
+              onClick={() => onOpenChange(false)}
+            >
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={isSubmitting || isLoading}>
+              {isSubmitting ? "Creando…" : "Crear turno"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  placeholder,
+  disabled,
+  items,
+  onValueChange,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  items: Array<{ value: string; label: string }>;
+  onValueChange: (value: string) => void;
+}) {
+  const id = label.toLowerCase().replaceAll(" ", "-");
+
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Select value={value} onValueChange={onValueChange} disabled={disabled}>
+        <SelectTrigger id={id}>
+          <SelectValue placeholder={placeholder} />
+        </SelectTrigger>
+        <SelectContent>
+          {items.map((item) => (
+            <SelectItem key={item.value} value={item.value}>
+              {item.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone?: "success";
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "mt-1 font-display text-2xl font-semibold tabular-nums",
+          tone === "success" && "text-success",
+        )}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function StateCard({
+  title,
+  description,
+}: {
+  title: string;
+  description?: string;
+}) {
+  return (
+    <div className="rounded-2xl border border-border bg-card p-8 text-center">
+      <p className="font-display text-base font-semibold text-foreground">
+        {title}
+      </p>
+      {description && (
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      )}
+    </div>
+  );
+}
+
+function errorMessage(error: unknown) {
+  if (error instanceof AdminCrudApiError) return error.message;
+  if (error instanceof Error) return error.message;
+  return "Ocurrió un error inesperado.";
 }

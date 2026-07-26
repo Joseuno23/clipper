@@ -33,6 +33,15 @@ const staffCreateSchema = z.object({
   restDays: z.array(z.union([z.date(), z.string()])).optional(),
   specialties: z.array(z.string()).optional(),
   roles: z.array(z.nativeEnum(StaffRole)).optional(),
+  serviceCommissions: z
+    .array(
+      z.object({
+        serviceId: z.string(),
+        commissionMode: z.nativeEnum(CommissionMode),
+        commissionValue: z.union([z.number(), z.string()]),
+      }),
+    )
+    .optional(),
 });
 
 const staffUpdateSchema = staffCreateSchema
@@ -90,6 +99,7 @@ export function normalizeStaffCreateInput(
     restDays: normalizeRestDays(input.restDays),
     specialties: normalizeSpecialties(input.specialties),
     roles: normalizeRoles(input.roles),
+    serviceCommissions: normalizeServiceCommissions(input.serviceCommissions),
   };
 }
 
@@ -151,6 +161,11 @@ export function normalizeStaffUpdateInput(
   }
   if ("roles" in input) {
     data.roles = normalizeRoles(input.roles);
+  }
+  if ("serviceCommissions" in input) {
+    data.serviceCommissions = normalizeServiceCommissions(
+      input.serviceCommissions,
+    );
   }
 
   return data;
@@ -230,6 +245,33 @@ function normalizeSpecialties(specialties: StaffCreateInput["specialties"]) {
 
 function normalizeRoles(roles: StaffCreateInput["roles"]) {
   return Array.from(new Set(roles ?? [])).sort();
+}
+
+function normalizeServiceCommissions(
+  commissions: StaffCreateInput["serviceCommissions"],
+) {
+  const byService = new Map<
+    string,
+    NonNullable<StaffCreateInput["serviceCommissions"]>[number]
+  >();
+
+  for (const commission of commissions ?? []) {
+    const serviceId = normalizeField("serviceCommissions.serviceId", () =>
+      normalizeText(commission.serviceId, { required: true }),
+    )!;
+    byService.set(serviceId, { ...commission, serviceId });
+  }
+
+  return Array.from(byService.values())
+    .map((commission) => ({
+      serviceId: commission.serviceId,
+      commissionMode: commission.commissionMode,
+      commissionValue: normalizeCommissionValue(
+        commission.commissionMode,
+        commission.commissionValue,
+      ),
+    }))
+    .sort((a, b) => a.serviceId.localeCompare(b.serviceId));
 }
 
 function normalizeField<T>(field: string, normalize: () => T): T {

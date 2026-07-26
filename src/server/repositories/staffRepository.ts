@@ -1,11 +1,15 @@
 import { prisma } from "../db/client";
+import { ApiError } from "../api/errors";
+import type { StaffRole } from "../../generated/prisma/enums";
 import type {
+  NormalizedStaffServiceCommissionInput,
   NormalizedStaffUpdateInput,
   StaffRepository,
 } from "../domain/staff/types";
 
 const staffInclude = {
   roles: { orderBy: { role: "asc" as const } },
+  serviceCommissions: { orderBy: { serviceId: "asc" as const } },
 };
 
 export const staffRepository: StaffRepository = {
@@ -24,6 +28,13 @@ export const staffRepository: StaffRepository = {
   },
 
   async create({ barberShopId, data }) {
+    const serviceCommissions = await validateServiceCommissions({
+      client: prisma,
+      barberShopId,
+      roles: data.roles,
+      serviceCommissions: data.serviceCommissions,
+    });
+
     return prisma.staffMember.create({
       data: {
         barberShopId,
@@ -44,6 +55,14 @@ export const staffRepository: StaffRepository = {
         roles: {
           create: data.roles.map((role) => ({ barberShopId, role })),
         },
+        serviceCommissions: {
+          create: serviceCommissions.map((commission) => ({
+            barberShopId,
+            serviceId: commission.serviceId,
+            commissionMode: commission.commissionMode,
+            commissionValue: commission.commissionValue,
+          })),
+        },
       },
       include: staffInclude,
     });
@@ -59,7 +78,7 @@ export const staffRepository: StaffRepository = {
   async update({ barberShopId, id, data }) {
     const existing = await prisma.staffMember.findFirst({
       where: { id, barberShopId, deletedAt: null },
-      select: { id: true },
+      select: { id: true, roles: { select: { role: true } } },
     });
 
     if (!existing) {
@@ -67,6 +86,17 @@ export const staffRepository: StaffRepository = {
     }
 
     return prisma.$transaction(async (transaction) => {
+      const finalRoles = data.roles ?? existing.roles.map(({ role }) => role);
+      const serviceCommissions =
+        data.serviceCommissions === undefined
+          ? undefined
+          : await validateServiceCommissions({
+              client: transaction,
+              barberShopId,
+              roles: finalRoles,
+              serviceCommissions: data.serviceCommissions,
+            });
+
       await transaction.staffMember.update({
         where: { id },
         data: toStaffUpdateData(data),
@@ -86,6 +116,31 @@ export const staffRepository: StaffRepository = {
             })),
           });
         }
+      }
+
+      if (serviceCommissions !== undefined) {
+        await transaction.staffServiceCommission.deleteMany({
+          where: { staffMemberId: id, barberShopId },
+        });
+
+        if (serviceCommissions.length > 0) {
+          await transaction.staffServiceCommission.createMany({
+            data: serviceCommissions.map((commission) => ({
+              staffMemberId: id,
+              barberShopId,
+              serviceId: commission.serviceId,
+              commissionMode: commission.commissionMode,
+              commissionValue: commission.commissionValue,
+            })),
+          });
+        }
+      } else if (data.roles !== undefined) {
+        await deleteIneligibleServiceCommissions({
+          client: transaction,
+          barberShopId,
+          staffMemberId: id,
+          roles: finalRoles,
+        });
       }
 
       return transaction.staffMember.findFirstOrThrow({
@@ -112,6 +167,117 @@ export const staffRepository: StaffRepository = {
     });
   },
 };
+
+type ServiceCommissionValidationClient = {
+  service: {
+    findMany(input: {
+      where: {
+        barberShopId: string;
+        deletedAt: null;
+        isActive: true;
+        allowedRoles: {
+          some: { barberShopId: string; role: { in: StaffRole[] } };
+        };
+      };
+      select: { id: true };
+    }): Promise<Array<{ id: string }>>;
+  };
+};
+
+type ServiceCommissionPruneClient = {
+  staffServiceCommission: {
+    deleteMany(input: {
+      where: {
+        staffMemberId: string;
+        barberShopId: string;
+        NOT?: {
+          service: {
+            barberShopId: string;
+            deletedAt: null;
+            isActive: true;
+            allowedRoles: {
+              some: { barberShopId: string; role: { in: StaffRole[] } };
+            };
+          };
+        };
+      };
+    }): Promise<unknown>;
+  };
+};
+
+async function validateServiceCommissions({
+  client,
+  barberShopId,
+  roles,
+  serviceCommissions,
+}: {
+  client: ServiceCommissionValidationClient;
+  barberShopId: string;
+  roles: StaffRole[];
+  serviceCommissions: NormalizedStaffServiceCommissionInput[];
+}) {
+  if (serviceCommissions.length === 0) return [];
+
+  const eligibleServices = await client.service.findMany({
+    where: {
+      barberShopId,
+      deletedAt: null,
+      isActive: true,
+      allowedRoles: {
+        some: { barberShopId, role: { in: roles } },
+      },
+    },
+    select: { id: true },
+  });
+  const eligibleServiceIds = new Set(eligibleServices.map(({ id }) => id));
+
+  const invalidCommission = serviceCommissions.find(
+    (commission) => !eligibleServiceIds.has(commission.serviceId),
+  );
+
+  if (invalidCommission) {
+    throw new ApiError({
+      code: "BAD_REQUEST",
+      message:
+        "Service commissions must reference active services allowed for the selected staff roles.",
+    });
+  }
+
+  return serviceCommissions;
+}
+
+async function deleteIneligibleServiceCommissions({
+  client,
+  barberShopId,
+  staffMemberId,
+  roles,
+}: {
+  client: ServiceCommissionPruneClient;
+  barberShopId: string;
+  staffMemberId: string;
+  roles: StaffRole[];
+}) {
+  await client.staffServiceCommission.deleteMany({
+    where: {
+      staffMemberId,
+      barberShopId,
+      ...(roles.length === 0
+        ? {}
+        : {
+            NOT: {
+              service: {
+                barberShopId,
+                deletedAt: null,
+                isActive: true,
+                allowedRoles: {
+                  some: { barberShopId, role: { in: roles } },
+                },
+              },
+            },
+          }),
+    },
+  });
+}
 
 function toStaffUpdateData(data: NormalizedStaffUpdateInput) {
   return {

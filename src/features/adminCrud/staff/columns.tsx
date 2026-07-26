@@ -63,12 +63,6 @@ export function staffColumns({
           : "Sin especialidades",
     },
     {
-      key: "commission",
-      header: "Comisión",
-      cell: (staff) =>
-        `${commissionModeLabels[staff.commissionMode]} · ${formatCommission(staff)}`,
-    },
-    {
       key: "status",
       header: "Estado",
       cell: (staff) =>
@@ -90,22 +84,4 @@ export function staffColumns({
       ),
     },
   ];
-}
-
-function formatCommission(staff: StaffDto) {
-  if (staff.commissionMode === "NONE") return "0";
-  if (staff.commissionMode === "PERCENTAGE_BPS") {
-    const bps = Number(staff.commissionValue);
-    if (!Number.isFinite(bps)) return staff.commissionValue;
-    return `${bps / 100}%`;
-  }
-
-  const amount = Number(staff.commissionValue);
-  if (!Number.isFinite(amount)) return staff.commissionValue;
-
-  return new Intl.NumberFormat("es-AR", {
-    style: "currency",
-    currency: "ARS",
-    maximumFractionDigits: 2,
-  }).format(amount);
 }

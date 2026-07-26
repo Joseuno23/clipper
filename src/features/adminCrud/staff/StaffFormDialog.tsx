@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -13,12 +14,22 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import type {
   CommissionMode,
+  ServiceDto,
   StaffCreateInput,
   StaffDto,
   StaffRole,
 } from "@/shared/api/adminCrud";
+import { adminCrudKeys, servicesApi } from "@/shared/api/adminCrud";
 
 import { commissionModeLabels, staffRoleOptions } from "./columns";
 
@@ -29,10 +40,14 @@ type StaffFormValues = {
   email: string;
   phone: string;
   isActive: boolean;
-  commissionMode: CommissionMode;
-  commissionValue: string;
   specialties: string;
   roles: StaffRole[];
+  serviceCommissions: Record<string, StaffServiceCommissionFormValue>;
+};
+
+type StaffServiceCommissionFormValue = {
+  commissionMode: CommissionMode;
+  commissionValue: string;
 };
 
 type StaffFormDialogProps = {
@@ -51,11 +66,13 @@ const emptyValues: StaffFormValues = {
   email: "",
   phone: "",
   isActive: true,
-  commissionMode: "NONE",
-  commissionValue: "0",
   specialties: "",
   roles: [],
+  serviceCommissions: {},
 };
+
+const SERVICES_PAGE_SIZE = 100;
+const SERVICES_LIST_PARAMS = { limit: SERVICES_PAGE_SIZE, offset: 0 };
 
 export function StaffFormDialog({
   open,
@@ -68,6 +85,11 @@ export function StaffFormDialog({
   const [values, setValues] = useState<StaffFormValues>(emptyValues);
   const [localError, setLocalError] = useState<string | null>(null);
   const title = staff ? "Editar staff" : "Nuevo staff";
+  const servicesQuery = useQuery({
+    queryKey: adminCrudKeys.servicesList(SERVICES_LIST_PARAMS),
+    queryFn: loadAllServices,
+    enabled: open,
+  });
 
   useEffect(() => {
     if (!open) return;
@@ -81,10 +103,17 @@ export function StaffFormDialog({
             email: staff.email ?? "",
             phone: staff.phone ?? "",
             isActive: staff.isActive,
-            commissionMode: staff.commissionMode,
-            commissionValue: staff.commissionValue,
             specialties: staff.specialties.join(", "),
             roles: staff.roles,
+            serviceCommissions: Object.fromEntries(
+              staff.serviceCommissions.map((commission) => [
+                commission.serviceId,
+                {
+                  commissionMode: commission.commissionMode,
+                  commissionValue: commission.commissionValue,
+                },
+              ]),
+            ),
           }
         : emptyValues,
     );
@@ -92,6 +121,13 @@ export function StaffFormDialog({
   }, [open, staff]);
 
   const displayError = useMemo(() => localError ?? error, [error, localError]);
+  const matchingServices = useMemo(
+    () => filterServicesByRoles(servicesQuery.data ?? [], values.roles),
+    [servicesQuery.data, values.roles],
+  );
+  const requiresServices = values.roles.length > 0;
+  const canSubmit =
+    !isSubmitting && (!requiresServices || servicesQuery.isSuccess);
 
   function updateValue<K extends keyof StaffFormValues>(
     key: K,
@@ -109,42 +145,81 @@ export function StaffFormDialog({
     }));
   }
 
+  function updateServiceCommission(
+    serviceId: string,
+    value: StaffServiceCommissionFormValue,
+  ) {
+    setValues((current) => ({
+      ...current,
+      serviceCommissions: {
+        ...current.serviceCommissions,
+        [serviceId]: value,
+      },
+    }));
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const firstName = values.firstName.trim();
     const lastName = values.lastName.trim();
     const displayName = values.displayName.trim();
-    const commissionValue = Number(values.commissionValue);
 
     if (!firstName || !lastName || !displayName) {
       setLocalError("Nombre, apellido y nombre visible son obligatorios.");
       return;
     }
 
-    if (!Number.isFinite(commissionValue) || commissionValue < 0) {
-      setLocalError("La comisión debe ser un número mayor o igual a cero.");
+    if (requiresServices && !servicesQuery.isSuccess) {
+      setLocalError("Esperá a que carguen los servicios para guardar.");
       return;
     }
 
-    setLocalError(null);
-    onSubmit({
-      firstName,
-      lastName,
-      displayName,
-      email: nullable(values.email),
-      phone: nullable(values.phone),
-      isActive: values.isActive,
-      commissionMode: values.commissionMode,
-      commissionValue: values.commissionValue.trim(),
-      specialties: csv(values.specialties),
-      roles: values.roles,
-    });
+    try {
+      const serviceCommissions = matchingServices.map((service) => {
+        const commission = values.serviceCommissions[service.id] ?? {
+          commissionMode: "NONE" as CommissionMode,
+          commissionValue: "0",
+        };
+        const value = Number(commission.commissionValue);
+
+        if (!Number.isFinite(value) || value < 0) {
+          throw new Error(
+            `La comisión de ${service.name} debe ser mayor o igual a cero.`,
+          );
+        }
+
+        return {
+          serviceId: service.id,
+          commissionMode: commission.commissionMode,
+          commissionValue: commission.commissionValue.trim(),
+        };
+      });
+
+      setLocalError(null);
+      onSubmit({
+        firstName,
+        lastName,
+        displayName,
+        email: nullable(values.email),
+        phone: nullable(values.phone),
+        isActive: values.isActive,
+        commissionMode: "NONE",
+        commissionValue: "0",
+        specialties: csv(values.specialties),
+        roles: values.roles,
+        serviceCommissions,
+      });
+    } catch (error) {
+      setLocalError(
+        error instanceof Error ? error.message : "Comisión inválida.",
+      );
+    }
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
         <form onSubmit={handleSubmit} className="space-y-4">
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
@@ -217,40 +292,6 @@ export function StaffFormDialog({
             </Field>
           </div>
 
-          <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Modo de comisión" htmlFor="commissionMode">
-              <select
-                id="commissionMode"
-                className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
-                value={values.commissionMode}
-                onChange={(event) =>
-                  updateValue(
-                    "commissionMode",
-                    event.target.value as CommissionMode,
-                  )
-                }
-                disabled={isSubmitting}
-              >
-                {Object.entries(commissionModeLabels).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Valor de comisión" htmlFor="commissionValue">
-              <Input
-                id="commissionValue"
-                inputMode="decimal"
-                value={values.commissionValue}
-                onChange={(event) =>
-                  updateValue("commissionValue", event.target.value)
-                }
-                disabled={isSubmitting}
-              />
-            </Field>
-          </div>
-
           <Field label="Especialidades" htmlFor="staffSpecialties">
             <Input
               id="staffSpecialties"
@@ -286,6 +327,108 @@ export function StaffFormDialog({
             </div>
           </fieldset>
 
+          <section className="space-y-2">
+            <div>
+              <h3 className="text-sm font-medium text-foreground">
+                Servicios y comisiones
+              </h3>
+              <p className="text-xs text-muted-foreground">
+                Se muestran los servicios activos que aceptan al menos uno de
+                los roles seleccionados.
+              </p>
+            </div>
+            {servicesQuery.isLoading ? (
+              <p className="text-sm text-muted-foreground">
+                Cargando servicios…
+              </p>
+            ) : servicesQuery.isError ? (
+              <p role="alert" className="text-sm text-destructive">
+                No se pudieron cargar los servicios para comisiones.
+              </p>
+            ) : matchingServices.length === 0 ? (
+              <p className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                Seleccioná roles para ver servicios compatibles.
+              </p>
+            ) : (
+              <div className="rounded-md border">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Servicio</TableHead>
+                      <TableHead>Roles</TableHead>
+                      <TableHead>Modo</TableHead>
+                      <TableHead>Valor</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {matchingServices.map((service) => {
+                      const commission = values.serviceCommissions[
+                        service.id
+                      ] ?? { commissionMode: "NONE", commissionValue: "0" };
+
+                      return (
+                        <TableRow key={service.id}>
+                          <TableCell className="font-medium">
+                            {service.name}
+                          </TableCell>
+                          <TableCell className="text-muted-foreground">
+                            {service.allowedRoles
+                              .map((role) => staffRoleLabel(role))
+                              .join(", ")}
+                          </TableCell>
+                          <TableCell>
+                            <select
+                              aria-label={`Modo de comisión para ${service.name}`}
+                              className="h-9 w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+                              value={commission.commissionMode}
+                              onChange={(event) =>
+                                updateServiceCommission(service.id, {
+                                  ...commission,
+                                  commissionMode: event.target
+                                    .value as CommissionMode,
+                                  commissionValue:
+                                    event.target.value === "NONE"
+                                      ? "0"
+                                      : commission.commissionValue,
+                                })
+                              }
+                              disabled={isSubmitting}
+                            >
+                              {Object.entries(commissionModeLabels).map(
+                                ([value, label]) => (
+                                  <option key={value} value={value}>
+                                    {label}
+                                  </option>
+                                ),
+                              )}
+                            </select>
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              aria-label={`Valor de comisión para ${service.name}`}
+                              inputMode="decimal"
+                              value={commission.commissionValue}
+                              onChange={(event) =>
+                                updateServiceCommission(service.id, {
+                                  ...commission,
+                                  commissionValue: event.target.value,
+                                })
+                              }
+                              disabled={
+                                isSubmitting ||
+                                commission.commissionMode === "NONE"
+                              }
+                            />
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </section>
+
           <label className="flex items-center gap-2 text-sm text-foreground">
             <Checkbox
               checked={values.isActive}
@@ -306,7 +449,7 @@ export function StaffFormDialog({
             >
               Cancelar
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button type="submit" disabled={!canSubmit}>
               {isSubmitting ? "Guardando…" : "Guardar"}
             </Button>
           </DialogFooter>
@@ -346,5 +489,35 @@ function csv(value: string) {
         .map((part) => part.trim())
         .filter(Boolean),
     ),
+  );
+}
+
+function filterServicesByRoles(services: ServiceDto[], roles: StaffRole[]) {
+  if (roles.length === 0) return [];
+
+  const selected = new Set(roles);
+  return services.filter(
+    (service) =>
+      service.isActive &&
+      service.allowedRoles.some((role) => selected.has(role)),
+  );
+}
+
+async function loadAllServices() {
+  const services: ServiceDto[] = [];
+
+  for (let offset = 0; ; offset += SERVICES_PAGE_SIZE) {
+    const page = await servicesApi.list({ limit: SERVICES_PAGE_SIZE, offset });
+    services.push(...page);
+
+    if (page.length < SERVICES_PAGE_SIZE) {
+      return services;
+    }
+  }
+}
+
+function staffRoleLabel(role: StaffRole) {
+  return (
+    staffRoleOptions.find((option) => option.value === role)?.label ?? role
   );
 }

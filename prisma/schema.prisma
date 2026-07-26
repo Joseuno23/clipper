@@ -10,7 +10,9 @@ datasource db {
 // Domain-service-only invariants intentionally deferred because Prisma cannot
 // express them portably here: positive prices/durations/quantities, appointment
 // overlap prevention, exact sale payment totals, stock sufficiency, working-day
-// enforcement, audit emission, and soft-delete-aware partial unique reuse.
+// enforcement, audit emission, and soft-delete-aware partial unique reuse. Queue
+// one-in-service and active-position uniqueness are enforced by SQL partial
+// unique indexes in migrations plus repository transaction guards.
 
 enum UserStatus {
   ACTIVE
@@ -219,12 +221,13 @@ model StaffMember {
   updatedAt       DateTime       @updatedAt
   deletedAt       DateTime?
 
-  barberShop   BarberShop           @relation(fields: [barberShopId], references: [id], onDelete: Restrict)
-  user         User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
-  roles        StaffMemberRole[]
-  services     ServiceAllowedRole[]
-  appointments Appointment[]
-  sales        Sale[]
+  barberShop         BarberShop               @relation(fields: [barberShopId], references: [id], onDelete: Restrict)
+  user               User?                    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  roles              StaffMemberRole[]
+  services           ServiceAllowedRole[]
+  serviceCommissions StaffServiceCommission[]
+  appointments       Appointment[]
+  sales              Sale[]
 
   @@unique([barberShopId, userId])
   @@unique([barberShopId, normalizedEmail])
@@ -259,8 +262,9 @@ model Service {
   updatedAt       DateTime  @updatedAt
   deletedAt       DateTime?
 
-  barberShop          BarberShop           @relation(fields: [barberShopId], references: [id], onDelete: Restrict)
+  barberShop          BarberShop               @relation(fields: [barberShopId], references: [id], onDelete: Restrict)
   allowedRoles        ServiceAllowedRole[]
+  staffCommissions    StaffServiceCommission[]
   appointmentServices AppointmentService[]
   saleItems           SaleItem[]
 
@@ -283,6 +287,24 @@ model ServiceAllowedRole {
   @@unique([serviceId, role])
   @@index([barberShopId, role])
   @@index([staffMemberId])
+}
+
+model StaffServiceCommission {
+  id              String         @id @default(cuid())
+  staffMemberId   String
+  serviceId       String
+  barberShopId    String
+  commissionMode  CommissionMode @default(NONE)
+  commissionValue Decimal        @default(0) @db.Decimal(12, 2)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  staffMember StaffMember @relation(fields: [staffMemberId], references: [id], onDelete: Cascade)
+  service     Service     @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+
+  @@unique([staffMemberId, serviceId])
+  @@index([barberShopId, serviceId])
+  @@index([serviceId])
 }
 
 model Product {

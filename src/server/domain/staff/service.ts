@@ -110,6 +110,11 @@ export function toStaffDto(record: {
   createdAt: Date;
   updatedAt: Date;
   roles: { role: StaffDto["roles"][number] }[];
+  serviceCommissions: {
+    serviceId: string;
+    commissionMode: StaffDto["serviceCommissions"][number]["commissionMode"];
+    commissionValue: { toString(): string };
+  }[];
 }): StaffDto {
   return {
     id: record.id,
@@ -128,6 +133,11 @@ export function toStaffDto(record: {
     restDays: record.restDays.map((date) => date.toISOString()),
     specialties: record.specialties,
     roles: record.roles.map(({ role }) => role),
+    serviceCommissions: record.serviceCommissions.map((commission) => ({
+      serviceId: commission.serviceId,
+      commissionMode: commission.commissionMode,
+      commissionValue: commission.commissionValue.toString(),
+    })),
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
   };

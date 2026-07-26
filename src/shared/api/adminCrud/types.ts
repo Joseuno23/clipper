@@ -79,8 +79,21 @@ export type StaffDto = {
   restDays: string[];
   specialties: string[];
   roles: StaffRole[];
+  serviceCommissions: StaffServiceCommissionDto[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type StaffServiceCommissionDto = {
+  serviceId: string;
+  commissionMode: CommissionMode;
+  commissionValue: string;
+};
+
+export type StaffServiceCommissionInput = {
+  serviceId: string;
+  commissionMode: CommissionMode;
+  commissionValue: number | string;
 };
 
 export type StaffCreateInput = {
@@ -94,6 +107,7 @@ export type StaffCreateInput = {
   commissionValue?: number | string;
   specialties?: string[];
   roles?: StaffRole[];
+  serviceCommissions?: StaffServiceCommissionInput[];
 };
 
 export type StaffUpdateInput = Partial<StaffCreateInput>;

@@ -80,6 +80,18 @@ function createRecord(overrides: Partial<StaffRecord> = {}): StaffRecord {
         createdAt: now,
       },
     ],
+    serviceCommissions: [
+      {
+        id: "commission_1",
+        staffMemberId: "staff_1",
+        serviceId: "service_1",
+        barberShopId: "shop_1",
+        commissionMode: "PERCENTAGE_BPS",
+        commissionValue: { toString: () => "1500.00" },
+        createdAt: now,
+        updatedAt: now,
+      },
+    ],
     ...overrides,
   };
 }
@@ -160,6 +172,13 @@ describe("staff API handlers", () => {
           displayName: " Ada   L. ",
           email: "ADA@CLIPPER.TEST",
           roles: ["BARBER"],
+          serviceCommissions: [
+            {
+              serviceId: "service_1",
+              commissionMode: "PERCENTAGE_BPS",
+              commissionValue: "1500",
+            },
+          ],
         },
       }),
       response,
@@ -174,6 +193,13 @@ describe("staff API handlers", () => {
         displayName: "Ada L.",
         normalizedEmail: "ada@clipper.test",
         roles: ["BARBER"],
+        serviceCommissions: [
+          {
+            serviceId: "service_1",
+            commissionMode: "PERCENTAGE_BPS",
+            commissionValue: "1500.00",
+          },
+        ],
       }),
     });
     expect(response.statusCode).toBe(200);
@@ -197,14 +223,22 @@ describe("staff API handlers", () => {
       createRequest({
         method: "PATCH",
         query: { id: "staff_1" },
-        body: { displayName: " Ada Updated ", roles: ["MANAGER"] },
+        body: {
+          displayName: " Ada Updated ",
+          roles: ["MANAGER"],
+          serviceCommissions: [],
+        },
       }),
       patchResponse,
     );
     expect(staffRepository.update).toHaveBeenCalledWith({
       barberShopId: "shop_1",
       id: "staff_1",
-      data: { displayName: "Ada Updated", roles: ["MANAGER"] },
+      data: {
+        displayName: "Ada Updated",
+        roles: ["MANAGER"],
+        serviceCommissions: [],
+      },
     });
 
     const deleteResponse = createResponse();

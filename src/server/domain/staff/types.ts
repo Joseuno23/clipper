@@ -11,6 +11,17 @@ export type StaffMemberRoleRecord = {
   createdAt: Date;
 };
 
+export type StaffServiceCommissionRecord = {
+  id: string;
+  staffMemberId: string;
+  serviceId: string;
+  barberShopId: string;
+  commissionMode: CommissionMode;
+  commissionValue: { toString(): string };
+  createdAt: Date;
+  updatedAt: Date;
+};
+
 export type StaffRecord = {
   id: string;
   barberShopId: string;
@@ -32,6 +43,7 @@ export type StaffRecord = {
   updatedAt: Date;
   deletedAt: Date | null;
   roles: StaffMemberRoleRecord[];
+  serviceCommissions: StaffServiceCommissionRecord[];
 };
 
 export type StaffDto = Omit<
@@ -42,13 +54,33 @@ export type StaffDto = Omit<
   | "updatedAt"
   | "deletedAt"
   | "roles"
+  | "serviceCommissions"
   | "restDays"
 > & {
   commissionValue: string;
   restDays: string[];
   roles: StaffRole[];
+  serviceCommissions: StaffServiceCommissionDto[];
   createdAt: string;
   updatedAt: string;
+};
+
+export type StaffServiceCommissionDto = {
+  serviceId: string;
+  commissionMode: CommissionMode;
+  commissionValue: string;
+};
+
+export type StaffServiceCommissionInput = {
+  serviceId: string;
+  commissionMode: CommissionMode;
+  commissionValue: number | string;
+};
+
+export type NormalizedStaffServiceCommissionInput = {
+  serviceId: string;
+  commissionMode: CommissionMode;
+  commissionValue: string;
 };
 
 export type StaffCreateInput = {
@@ -65,6 +97,7 @@ export type StaffCreateInput = {
   restDays?: Array<Date | string>;
   specialties?: string[];
   roles?: StaffRole[];
+  serviceCommissions?: StaffServiceCommissionInput[];
 };
 
 export type StaffUpdateInput = Partial<StaffCreateInput>;
@@ -85,6 +118,7 @@ export type NormalizedStaffCreateInput = {
   restDays: Date[];
   specialties: string[];
   roles: StaffRole[];
+  serviceCommissions: NormalizedStaffServiceCommissionInput[];
 };
 
 export type NormalizedStaffUpdateInput = Partial<NormalizedStaffCreateInput>;
