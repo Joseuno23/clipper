@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/errors";
 import type { StaffRole } from "../../../generated/prisma/enums";
 import { createServiceService } from "./service";
-import { parseServiceCreateInput, parseServiceUpdateInput } from "./validation";
+import {
+  parseServiceCreateInput,
+  parseServiceListInput,
+  parseServiceUpdateInput,
+} from "./validation";
 import type { ServiceRecord, ServiceRepository } from "./types";
 
 const baseContext = {
@@ -111,12 +115,18 @@ describe("service service", () => {
   it("lists active services scoped to the authenticated tenant", async () => {
     const service = createServiceService(repository);
 
-    await service.list(baseContext, { limit: 50, offset: 0 });
+    await service.list(baseContext, { limit: 50, offset: 0, query: null });
 
     expect(repository.list).toHaveBeenCalledWith({
       barberShopId: "shop_1",
-      pagination: { limit: 50, offset: 0 },
+      pagination: { limit: 50, offset: 0, query: null },
     });
+  });
+
+  it("normalizes service list search query", () => {
+    expect(
+      parseServiceListInput({ limit: "8", offset: "0", query: "  Corte  " }),
+    ).toEqual({ limit: 8, offset: 0, query: "Corte" });
   });
 
   it("normalizes create input, price, duration, and allowed roles", async () => {

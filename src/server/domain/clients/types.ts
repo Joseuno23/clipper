@@ -54,11 +54,13 @@ export type NormalizedClientUpdateInput = Partial<NormalizedClientCreateInput>;
 export type ClientListInput = {
   limit?: number;
   offset?: number;
+  query?: string;
 };
 
 export type NormalizedClientListInput = {
   limit: number;
   offset: number;
+  query: string | null;
 };
 
 export type ClientRepository = {

@@ -11,7 +11,12 @@ const serviceInclude = {
 export const serviceRepository: ServiceRepository = {
   async list({ barberShopId, pagination }) {
     return prisma.service.findMany({
-      where: { barberShopId, deletedAt: null, isActive: true },
+      where: {
+        barberShopId,
+        deletedAt: null,
+        isActive: true,
+        ...buildSearchWhere(pagination.query),
+      },
       include: serviceInclude,
       orderBy: [{ name: "asc" }],
       take: pagination.limit,
@@ -110,4 +115,16 @@ function toServiceUpdateData(data: NormalizedServiceUpdateInput) {
       : { durationMinutes: data.durationMinutes }),
     ...(data.basePrice === undefined ? {} : { price: data.basePrice }),
   };
+}
+
+function buildSearchWhere(query: string | null) {
+  if (!query) return {};
+
+  const words = query.trim().split(/\s+/).filter(Boolean);
+  const filters = words.flatMap((word) => [
+    { name: { contains: word, mode: "insensitive" as const } },
+    { description: { contains: word, mode: "insensitive" as const } },
+  ]);
+
+  return filters.length > 0 ? { OR: filters } : {};
 }

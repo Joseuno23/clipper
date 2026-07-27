@@ -12,6 +12,7 @@ const queueRepository = {
   findActiveClient: vi.fn(),
   findActiveStaff: vi.fn(),
   findActiveService: vi.fn(),
+  findActiveServices: vi.fn(),
   createWalkIn: vi.fn(),
   updateTicket: vi.fn(),
 };
@@ -122,6 +123,25 @@ describe("queue API handlers", () => {
       durationMinutes: 45,
       price: { toString: () => "1500.00" },
     });
+    const activeServices = [
+      {
+        id: "service_1",
+        name: "Classic Cut",
+        durationMinutes: 45,
+        price: { toString: () => "1500.00" },
+      },
+      {
+        id: "service_2",
+        name: "Beard Trim",
+        durationMinutes: 20,
+        price: { toString: () => "900.00" },
+      },
+    ];
+    queueRepository.findActiveServices
+      .mockReset()
+      .mockImplementation(async ({ serviceIds }) =>
+        activeServices.filter((service) => serviceIds.includes(service.id)),
+      );
     queueRepository.createWalkIn.mockReset().mockResolvedValue(createTicket());
     queueRepository.updateTicket.mockReset().mockResolvedValue(createTicket());
   });
@@ -147,7 +167,7 @@ describe("queue API handlers", () => {
         method: "POST",
         body: {
           clientId: "client_1",
-          serviceId: "service_1",
+          serviceIds: ["service_1", "service_2"],
           staffMemberId: "staff_1",
         },
       }),
@@ -159,10 +179,73 @@ describe("queue API handlers", () => {
       expect.objectContaining({
         barberShopId: "shop_1",
         data: {
+          serviceIds: ["service_1", "service_2"],
+          staffMemberId: "staff_1",
+          client: { kind: "existing", clientId: "client_1" },
+        },
+      }),
+    );
+  });
+
+  it("keeps legacy serviceId payloads compatible", async () => {
+    const { default: handler } = await import("./index");
+    const response = createResponse();
+
+    await handler(
+      createRequest({
+        method: "POST",
+        body: {
           clientId: "client_1",
           serviceId: "service_1",
           staffMemberId: "staff_1",
         },
+      }),
+      response,
+    );
+
+    expect(queueRepository.createWalkIn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ serviceIds: ["service_1"] }),
+      }),
+    );
+  });
+
+  it("creates a walk-in with normalized new-client data", async () => {
+    const { default: handler } = await import("./index");
+    const response = createResponse();
+
+    await handler(
+      createRequest({
+        method: "POST",
+        body: {
+          serviceIds: ["service_1"],
+          staffMemberId: "staff_1",
+          client: {
+            kind: "new",
+            firstName: " Ada ",
+            lastName: " Lovelace ",
+            phone: "11 5555-4444",
+            documentNumber: "20-123.456",
+          },
+        },
+      }),
+      response,
+    );
+
+    expect(queueRepository.findActiveClient).not.toHaveBeenCalled();
+    expect(queueRepository.createWalkIn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          client: {
+            kind: "new",
+            firstName: "Ada",
+            lastName: "Lovelace",
+            phone: "11 5555-4444",
+            normalizedPhone: "1155554444",
+            documentNumber: "20-123.456",
+            normalizedDocument: "20123456",
+          },
+        }),
       }),
     );
   });
@@ -185,6 +268,87 @@ describe("queue API handlers", () => {
       ticketId: "appt_1",
       data: { staffMemberId: "staff_2" },
     });
+  });
+
+  it("passes queue position actions through the patch handler", async () => {
+    const { default: handler } = await import("./[id]");
+    const response = createResponse();
+
+    await handler(
+      createRequest({
+        method: "PATCH",
+        query: { id: "appt_1" },
+        body: { positionAction: "UP" },
+      }),
+      response,
+    );
+
+    expect(queueRepository.updateTicket).toHaveBeenCalledWith({
+      barberShopId: "shop_1",
+      ticketId: "appt_1",
+      data: { positionAction: "UP" },
+    });
+  });
+
+  it("passes promote-to-chair actions through the patch handler", async () => {
+    const { default: handler } = await import("./[id]");
+    const response = createResponse();
+
+    await handler(
+      createRequest({
+        method: "PATCH",
+        query: { id: "appt_1" },
+        body: { positionAction: "CHAIR" },
+      }),
+      response,
+    );
+
+    expect(queueRepository.updateTicket).toHaveBeenCalledWith({
+      barberShopId: "shop_1",
+      ticketId: "appt_1",
+      data: { positionAction: "CHAIR" },
+    });
+  });
+
+  it("patches ticket client and replacement services", async () => {
+    const { default: handler } = await import("./[id]");
+    const response = createResponse();
+
+    await handler(
+      createRequest({
+        method: "PATCH",
+        query: { id: "appt_1" },
+        body: { clientId: "client_1", serviceIds: ["service_1", "service_2"] },
+      }),
+      response,
+    );
+
+    expect(queueRepository.updateTicket).toHaveBeenCalledWith({
+      barberShopId: "shop_1",
+      ticketId: "appt_1",
+      data: { clientId: "client_1", serviceIds: ["service_1", "service_2"] },
+      services: [
+        expect.objectContaining({ id: "service_1" }),
+        expect.objectContaining({ id: "service_2" }),
+      ],
+    });
+  });
+
+  it("rejects empty replacement services before patching", async () => {
+    const { default: handler } = await import("./[id]");
+    const response = createResponse();
+
+    await handler(
+      createRequest({
+        method: "PATCH",
+        query: { id: "appt_1" },
+        body: { serviceIds: [] },
+      }),
+      response,
+    );
+
+    expect(response.statusCode).toBe(400);
+    expect(queueRepository.updateTicket).not.toHaveBeenCalled();
   });
 
   it("rejects non-live queue statuses before patching", async () => {

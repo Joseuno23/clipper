@@ -13,7 +13,7 @@ import { CustomersPage } from "@/routes/customers";
 import { DashboardPage } from "@/routes/dashboard";
 import { LoginPage } from "@/routes/login";
 import { ProductsPage } from "@/routes/products";
-import { QueuePage } from "@/routes/queue";
+import { QueueDisplayPage, QueuePage } from "@/routes/queue";
 import { ReportsPage } from "@/routes/reports";
 import { SalesPage } from "@/routes/sales";
 import { ServicesPage } from "@/routes/services";
@@ -33,6 +33,7 @@ export const appRoutes: RouteObject[] = [
           { path: "dashboard", element: <DashboardPage /> },
           { path: "appointments", element: <AppointmentsPage /> },
           { path: "queue", element: <QueuePage /> },
+          { path: "queue/display", element: <QueueDisplayPage /> },
           { path: "sales", element: <SalesPage /> },
           { path: "customers", element: <CustomersPage /> },
           { path: "services", element: <ServicesPage /> },

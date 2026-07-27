@@ -26,6 +26,7 @@ export function adminListUrl(path: string, params: ListParams = {}) {
 
   if (params.limit !== undefined) search.set("limit", String(params.limit));
   if (params.offset !== undefined) search.set("offset", String(params.offset));
+  if (params.query !== undefined) search.set("query", params.query);
 
   const query = search.toString();
   return query ? `${path}?${query}` : path;

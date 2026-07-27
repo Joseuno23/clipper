@@ -12,6 +12,10 @@ import type {
 export function createClientService(repository: ClientRepository) {
   return {
     async list(context: AuthContext, pagination: NormalizedClientListInput) {
+      if (pagination.query && !isClientSearchQueryReady(pagination.query)) {
+        return [];
+      }
+
       const records = await repository.list({
         barberShopId: context.tenant.barberShopId,
         pagination,
@@ -87,6 +91,14 @@ export function createClientService(repository: ClientRepository) {
       return toClientDto(record);
     },
   };
+}
+
+function isClientSearchQueryReady(query: string) {
+  const digitCount = query.replace(/\D/g, "").length;
+  if (digitCount >= 4) return true;
+
+  const letterishCount = query.replace(/[\d\s]/g, "").length;
+  return letterishCount >= 3;
 }
 
 export type ClientService = ReturnType<typeof createClientService>;

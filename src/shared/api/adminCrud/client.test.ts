@@ -74,7 +74,7 @@ describe("admin CRUD API client", () => {
     );
     vi.stubGlobal("fetch", fetchMock);
 
-    await servicesApi.list({ limit: 10, offset: 20 });
+    await servicesApi.list({ limit: 10, offset: 20, query: "Corte" });
     await servicesApi.update("service_1", {
       name: "Corte premium",
       durationMinutes: 45,
@@ -85,7 +85,7 @@ describe("admin CRUD API client", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/api/services?limit=10&offset=20",
+      "/api/services?limit=10&offset=20&query=Corte",
       expect.any(Object),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(

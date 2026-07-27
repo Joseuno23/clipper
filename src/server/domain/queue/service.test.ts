@@ -87,9 +87,24 @@ function createRepository(): QueueRepository {
       durationMinutes: 45,
       price: { toString: () => "1500.00" },
     })),
+    findActiveServices: vi.fn(async () => [
+      {
+        id: "service_1",
+        name: "Classic Cut",
+        durationMinutes: 45,
+        price: { toString: () => "1500.00" },
+      },
+      {
+        id: "service_2",
+        name: "Beard Trim",
+        durationMinutes: 20,
+        price: { toString: () => "900.00" },
+      },
+    ]),
     createWalkIn: vi.fn(async () => createTicket()),
     updateTicket: vi.fn(async ({ data }) =>
       createTicket({
+        clientId: data.clientId ?? "client_1",
         staffMemberId: data.staffMemberId ?? "staff_1",
         queueStatus: data.queueStatus ?? "WAITING",
       }),
@@ -120,6 +135,14 @@ describe("queue service", () => {
         totalActiveCount: 2,
       }),
     );
+    expect(result.queues[0].tickets[0].services).toEqual([
+      {
+        serviceId: "service_1",
+        name: "Classic Cut",
+        durationMinutes: 45,
+        price: "1500.00",
+      },
+    ]);
   });
 
   it("creates walk-ins only after validating tenant-owned references", async () => {
@@ -128,9 +151,9 @@ describe("queue service", () => {
     await service.createWalkIn(
       baseContext,
       {
-        clientId: "client_1",
-        serviceId: "service_1",
+        serviceIds: ["service_1", "service_2"],
         staffMemberId: "staff_1",
+        client: { kind: "existing", clientId: "client_1" },
       },
       now,
     );
@@ -140,7 +163,40 @@ describe("queue service", () => {
       clientId: "client_1",
     });
     expect(repository.createWalkIn).toHaveBeenCalledWith(
-      expect.objectContaining({ barberShopId: "shop_1", queuedAt: now }),
+      expect.objectContaining({
+        barberShopId: "shop_1",
+        services: [
+          expect.objectContaining({ id: "service_1" }),
+          expect.objectContaining({ id: "service_2" }),
+        ],
+        queuedAt: now,
+      }),
+    );
+  });
+
+  it("rejects walk-ins when any selected service is inactive or cross-tenant", async () => {
+    repository.findActiveServices = vi.fn(async () => [
+      {
+        id: "service_1",
+        name: "Classic Cut",
+        durationMinutes: 45,
+        price: { toString: () => "1500.00" },
+      },
+    ]);
+    const service = createQueueService(repository);
+
+    await expect(
+      service.createWalkIn(baseContext, {
+        serviceIds: ["service_1", "other_service"],
+        staffMemberId: "staff_1",
+        client: { kind: "existing", clientId: "client_1" },
+      }),
+    ).rejects.toThrow(
+      new ApiError({
+        code: "BAD_REQUEST",
+        message:
+          "Walk-in queue ticket references an inactive or missing service.",
+      }),
     );
   });
 
@@ -150,9 +206,9 @@ describe("queue service", () => {
 
     await expect(
       service.createWalkIn(baseContext, {
-        clientId: "other_client",
-        serviceId: "service_1",
+        serviceIds: ["service_1"],
         staffMemberId: "staff_1",
+        client: { kind: "existing", clientId: "other_client" },
       }),
     ).rejects.toThrow(
       new ApiError({
@@ -179,5 +235,56 @@ describe("queue service", () => {
       ticketId: "appt_1",
       data: { staffMemberId: "staff_2" },
     });
+  });
+
+  it("updates ticket client and services after validating tenant-owned references", async () => {
+    const service = createQueueService(repository);
+
+    await service.updateTicket(baseContext, "appt_1", {
+      clientId: "client_2",
+      serviceIds: ["service_2", "service_1"],
+    });
+
+    expect(repository.findActiveClient).toHaveBeenCalledWith({
+      barberShopId: "shop_1",
+      clientId: "client_2",
+    });
+    expect(repository.findActiveServices).toHaveBeenCalledWith({
+      barberShopId: "shop_1",
+      serviceIds: ["service_2", "service_1"],
+    });
+    expect(repository.updateTicket).toHaveBeenCalledWith({
+      barberShopId: "shop_1",
+      ticketId: "appt_1",
+      data: { clientId: "client_2", serviceIds: ["service_2", "service_1"] },
+      services: [
+        expect.objectContaining({ id: "service_2" }),
+        expect.objectContaining({ id: "service_1" }),
+      ],
+    });
+  });
+
+  it("rejects ticket service edits when any selected service is inactive or cross-tenant", async () => {
+    repository.findActiveServices = vi.fn(async () => [
+      {
+        id: "service_1",
+        name: "Classic Cut",
+        durationMinutes: 45,
+        price: { toString: () => "1500.00" },
+      },
+    ]);
+    const service = createQueueService(repository);
+
+    await expect(
+      service.updateTicket(baseContext, "appt_1", {
+        serviceIds: ["service_1", "other_service"],
+      }),
+    ).rejects.toThrow(
+      new ApiError({
+        code: "BAD_REQUEST",
+        message:
+          "Walk-in queue ticket references an inactive or missing service.",
+      }),
+    );
   });
 });

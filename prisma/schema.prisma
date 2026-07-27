@@ -11,8 +11,8 @@ datasource db {
 // express them portably here: positive prices/durations/quantities, appointment
 // overlap prevention, exact sale payment totals, stock sufficiency, working-day
 // enforcement, audit emission, and soft-delete-aware partial unique reuse. Queue
-// one-in-service and active-position uniqueness are enforced by SQL partial
-// unique indexes in migrations plus repository transaction guards.
+// one-in-service, active-position, and active-client uniqueness are enforced by
+// SQL partial unique indexes in migrations plus repository transaction guards.
 
 enum UserStatus {
   ACTIVE

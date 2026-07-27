@@ -34,6 +34,7 @@ const serviceUpdateSchema = serviceCreateSchema
 const serviceListSchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).optional(),
   offset: z.coerce.number().int().min(0).optional(),
+  query: z.string().optional(),
 });
 
 export function parseServiceCreateInput(input: unknown) {
@@ -120,6 +121,7 @@ export function normalizeServiceListInput(
       input.offset === undefined
         ? 0
         : normalizeInteger(input.offset, { min: 0 }),
+    query: normalizeText(input.query, { maxLength: 120 }),
   };
 }
 

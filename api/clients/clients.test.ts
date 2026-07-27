@@ -126,11 +126,39 @@ describe("clients API handlers", () => {
 
     expect(clientRepository.list).toHaveBeenCalledWith({
       barberShopId: "shop_1",
-      pagination: { limit: 10, offset: 0 },
+      pagination: { limit: 10, offset: 0, query: null },
     });
     expect(response.body).toEqual({
       ok: true,
       data: [expect.objectContaining({ id: "client_1" })],
+    });
+  });
+
+  it("does not search clients until the query has enough signal", async () => {
+    const { default: handler } = await import("./index");
+    const response = createResponse();
+
+    await handler(
+      createRequest({ method: "GET", query: { query: "123", limit: "10" } }),
+      response,
+    );
+
+    expect(clientRepository.list).not.toHaveBeenCalled();
+    expect(response.body).toEqual({ ok: true, data: [] });
+  });
+
+  it("searches clients by query when threshold is met", async () => {
+    const { default: handler } = await import("./index");
+    const response = createResponse();
+
+    await handler(
+      createRequest({ method: "GET", query: { query: "1234", limit: "10" } }),
+      response,
+    );
+
+    expect(clientRepository.list).toHaveBeenCalledWith({
+      barberShopId: "shop_1",
+      pagination: { limit: 10, offset: 0, query: "1234" },
     });
   });
 

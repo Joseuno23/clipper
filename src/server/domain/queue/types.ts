@@ -46,14 +46,37 @@ export type QueueServiceRecord = {
 };
 
 export type QueueCreateInput = {
-  clientId: string;
-  serviceId: string;
+  serviceIds: string[];
   staffMemberId: string;
+  client:
+    | { kind: "existing"; clientId: string }
+    | {
+        kind: "new";
+        firstName: string;
+        lastName: string;
+        phone: string | null;
+        normalizedPhone: string | null;
+        documentNumber: string | null;
+        normalizedDocument: string | null;
+      };
 };
 
 export type QueueUpdateInput = {
   staffMemberId?: string;
   queueStatus?: QueueStatus;
+  positionAction?: QueuePositionAction;
+  clientId?: string;
+  serviceIds?: string[];
+};
+
+export type QueuePositionAction =
+  "UP" | "DOWN" | "FIRST_WAITING" | "LAST" | "CHAIR";
+
+export type QueueTicketServiceDto = {
+  serviceId: string | null;
+  name: string;
+  durationMinutes: number;
+  price: string;
 };
 
 export type QueueTicketDto = {
@@ -68,6 +91,7 @@ export type QueueTicketDto = {
   serviceName: string | null;
   serviceDurationMinutes: number | null;
   servicePrice: string | null;
+  services: QueueTicketServiceDto[];
 };
 
 export type StaffQueueDto = {
@@ -99,15 +123,20 @@ export type QueueRepository = {
     barberShopId: string;
     serviceId: string;
   }): Promise<QueueServiceRecord | null>;
+  findActiveServices(input: {
+    barberShopId: string;
+    serviceIds: string[];
+  }): Promise<QueueServiceRecord[]>;
   createWalkIn(input: {
     barberShopId: string;
     data: QueueCreateInput;
-    service: QueueServiceRecord;
+    services: QueueServiceRecord[];
     queuedAt: Date;
   }): Promise<QueueTicketRecord>;
   updateTicket(input: {
     barberShopId: string;
     ticketId: string;
     data: QueueUpdateInput;
+    services?: QueueServiceRecord[];
   }): Promise<QueueTicketRecord | null>;
 };

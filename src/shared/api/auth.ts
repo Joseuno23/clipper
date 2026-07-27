@@ -3,6 +3,8 @@ const AUTH_SHOP_SLUG_KEY = "clipper.auth.shopSlug";
 
 type StorageKind = "local" | "session";
 
+const authSessionListeners = new Set<() => void>();
+
 export type AuthSession = {
   token: string;
   shopSlug: string;
@@ -86,6 +88,7 @@ export function saveAuthSession({
 
   setStoredSession(target, { token, shopSlug });
   clearStoredSession(getStorage(otherKind));
+  emitAuthSessionChange();
 }
 
 export function getAuthSession(): AuthSession | null {
@@ -98,6 +101,15 @@ export function getAuthSession(): AuthSession | null {
 export function clearAuthSession() {
   clearStoredSession(getStorage("local"));
   clearStoredSession(getStorage("session"));
+  emitAuthSessionChange();
+}
+
+export function subscribeAuthSession(listener: () => void) {
+  authSessionListeners.add(listener);
+
+  return () => {
+    authSessionListeners.delete(listener);
+  };
 }
 
 export function createAuthHeaders(headers?: HeadersInit): Headers {
@@ -116,10 +128,16 @@ export async function authFetch(
   input: RequestInfo | URL,
   init: RequestInit = {},
 ) {
-  return fetch(input, {
+  const response = await fetch(input, {
     ...init,
     headers: createAuthHeaders(init.headers),
   });
+
+  if (response.status === 401) {
+    clearAuthSession();
+  }
+
+  return response;
 }
 
 export async function login(input: {
@@ -197,4 +215,8 @@ function clearStoredSession(storage: Storage | null) {
   } catch {
     // Ignore unavailable storage.
   }
+}
+
+function emitAuthSessionChange() {
+  authSessionListeners.forEach((listener) => listener());
 }

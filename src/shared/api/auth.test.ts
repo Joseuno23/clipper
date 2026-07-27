@@ -7,6 +7,7 @@ import {
   getAuthSession,
   login,
   saveAuthSession,
+  subscribeAuthSession,
 } from "./auth";
 
 afterEach(() => {
@@ -67,6 +68,38 @@ describe("auth headers", () => {
     expect(headers.get("authorization")).toBe("Bearer jwt_1");
     expect(headers.get("x-barbershop-slug")).toBe("niche-72");
     expect(headers.get("accept")).toBe("application/json");
+  });
+
+  it("clears stale auth when an authenticated request returns 401", async () => {
+    saveAuthSession({ token: "expired_jwt", shopSlug: "niche-72" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json(
+          {
+            ok: false,
+            error: { code: "UNAUTHENTICATED", message: "Token expired." },
+          },
+          { status: 401 },
+        ),
+      ),
+    );
+
+    const response = await authFetch("/api/queue");
+
+    expect(response.status).toBe(401);
+    expect(getAuthSession()).toBeNull();
+  });
+
+  it("notifies auth subscribers when auth is cleared", () => {
+    saveAuthSession({ token: "jwt_1", shopSlug: "niche-72" });
+    const listener = vi.fn();
+    const unsubscribe = subscribeAuthSession(listener);
+
+    clearAuthSession();
+    unsubscribe();
+
+    expect(listener).toHaveBeenCalledOnce();
   });
 });
 

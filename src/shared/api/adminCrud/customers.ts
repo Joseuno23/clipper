@@ -25,15 +25,15 @@ export const customersApi = {
 
 export const adminCrudKeys = {
   customers: ["adminCrud", "customers"] as const,
-  customersList: (params: Required<ListParams>) =>
+  customersList: (params: ListParams) =>
     [...adminCrudKeys.customers, "list", params] as const,
   services: ["adminCrud", "services"] as const,
-  servicesList: (params: Required<ListParams>) =>
+  servicesList: (params: ListParams) =>
     [...adminCrudKeys.services, "list", params] as const,
   staff: ["adminCrud", "staff"] as const,
-  staffList: (params: Required<ListParams>) =>
+  staffList: (params: ListParams) =>
     [...adminCrudKeys.staff, "list", params] as const,
   products: ["adminCrud", "products"] as const,
-  productsList: (params: Required<ListParams>) =>
+  productsList: (params: ListParams) =>
     [...adminCrudKeys.products, "list", params] as const,
 };

@@ -1,5 +1,5 @@
 import { AppShell } from "@/app/layouts/AppShell";
-import { QueueView } from "@/features/queue/QueueView";
+import { QueueDisplayView, QueueView } from "@/features/queue/QueueView";
 
 export function QueuePage() {
   return (
@@ -7,4 +7,8 @@ export function QueuePage() {
       <QueueView />
     </AppShell>
   );
+}
+
+export function QueueDisplayPage() {
+  return <QueueDisplayView />;
 }

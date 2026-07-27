@@ -61,6 +61,7 @@ describe("React Router route behavior", () => {
   it.each([
     ["/appointments", "Citas"],
     ["/queue", "Colas en vivo"],
+    ["/queue/display", "Colas en vivo"],
     ["/sales", "Caja"],
     ["/customers", "Clientes"],
     ["/services", "Servicios"],
@@ -79,6 +80,45 @@ describe("React Router route behavior", () => {
     expect(
       await screen.findByRole("heading", { name: expectedText }),
     ).toBeInTheDocument();
+  });
+
+  it("shows a clear sidebar entry for the TV queue view", async () => {
+    saveAuthSession({ token: "jwt_1", shopSlug: "niche-72" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ ok: true, data: [] })),
+    );
+
+    renderRoute("/queue");
+
+    const tvLinks = await screen.findAllByRole("link", { name: "Vista TV" });
+
+    expect(
+      tvLinks.some((link) => link.getAttribute("href") === "/queue/display"),
+    ).toBe(true);
+  });
+
+  it("redirects protected routes to login when an authenticated API call returns 401", async () => {
+    saveAuthSession({ token: "expired_jwt", shopSlug: "niche-72" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        Response.json(
+          {
+            ok: false,
+            error: { code: "UNAUTHENTICATED", message: "Token expired." },
+          },
+          { status: 401 },
+        ),
+      ),
+    );
+
+    renderRoute("/queue");
+
+    expect(
+      await screen.findByRole("heading", { name: "Bienvenido de vuelta" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No se pudieron cargar las colas")).toBeNull();
   });
 
   it("renders not-found behavior for unknown routes", async () => {

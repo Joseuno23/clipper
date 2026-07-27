@@ -24,6 +24,14 @@ export type QueueTicketDto = {
   serviceName: string | null;
   serviceDurationMinutes: number | null;
   servicePrice: string | null;
+  services: QueueTicketServiceDto[];
+};
+
+export type QueueTicketServiceDto = {
+  serviceId: string | null;
+  name: string;
+  durationMinutes: number;
+  price: string;
 };
 
 export type StaffQueueDto = {
@@ -42,15 +50,30 @@ export type LiveQueuesDto = {
 };
 
 export type QueueCreateInput = {
-  clientId: string;
-  serviceId: string;
+  serviceIds: string[];
+  serviceId?: string;
   staffMemberId: string;
+  client:
+    | { kind: "existing"; clientId: string }
+    | {
+        kind: "new";
+        firstName: string;
+        lastName: string;
+        phone?: string | null;
+        documentNumber?: string | null;
+      };
 };
 
 export type QueueUpdateInput = {
   staffMemberId?: string;
   queueStatus?: QueueStatus;
+  positionAction?: QueuePositionAction;
+  clientId?: string;
+  serviceIds?: string[];
 };
+
+export type QueuePositionAction =
+  "UP" | "DOWN" | "FIRST_WAITING" | "LAST" | "CHAIR";
 
 const QUEUE_PATH = "/api/queue";
 

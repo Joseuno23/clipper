@@ -33,23 +33,42 @@ export function createQueueService(repository: QueueRepository) {
       requireAdminCapable(context);
       const barberShopId = context.tenant.barberShopId;
 
-      await assertActiveClient(repository, barberShopId, data.clientId);
+      if (data.client.kind === "existing") {
+        await assertActiveClient(
+          repository,
+          barberShopId,
+          data.client.clientId,
+        );
+      }
       await assertActiveStaff(repository, barberShopId, data.staffMemberId);
-      const service = await repository.findActiveService({
+      const services = await repository.findActiveServices({
         barberShopId,
-        serviceId: data.serviceId,
+        serviceIds: data.serviceIds,
       });
 
-      if (!service) throw queueReferenceNotFound("service");
+      if (services.length !== data.serviceIds.length) {
+        throw queueReferenceNotFound("service");
+      }
 
-      return toQueueTicketDto(
-        await repository.createWalkIn({
-          barberShopId,
-          data,
-          service,
-          queuedAt,
-        }),
+      const servicesById = new Map(
+        services.map((service) => [service.id, service]),
       );
+      const orderedServices = data.serviceIds.map((serviceId) =>
+        servicesById.get(serviceId)!,
+      );
+
+      try {
+        return toQueueTicketDto(
+          await repository.createWalkIn({
+            barberShopId,
+            data,
+            services: orderedServices,
+            queuedAt,
+          }),
+        );
+      } catch (error) {
+        throw mapQueueCreateError(error);
+      }
     },
 
     async updateTicket(
@@ -63,11 +82,22 @@ export function createQueueService(repository: QueueRepository) {
       if (data.staffMemberId) {
         await assertActiveStaff(repository, barberShopId, data.staffMemberId);
       }
+      if (data.clientId) {
+        await assertActiveClient(repository, barberShopId, data.clientId);
+      }
+      const services = data.serviceIds
+        ? await findOrderedActiveServices(
+            repository,
+            barberShopId,
+            data.serviceIds,
+          )
+        : undefined;
 
       const ticket = await repository.updateTicket({
         barberShopId,
         ticketId,
         data,
+        services,
       });
 
       if (!ticket) {
@@ -122,7 +152,35 @@ export function toQueueTicketDto(record: QueueTicketRecord): QueueTicketDto {
     serviceName: primaryService?.serviceNameSnapshot ?? null,
     serviceDurationMinutes: primaryService?.serviceDurationSnapshot ?? null,
     servicePrice: primaryService?.servicePriceSnapshot.toString() ?? null,
+    services: [...record.services]
+      .sort((a, b) => a.sortOrder - b.sortOrder)
+      .map((service) => ({
+        serviceId: service.serviceId,
+        name: service.serviceNameSnapshot,
+        durationMinutes: service.serviceDurationSnapshot,
+        price: service.servicePriceSnapshot.toString(),
+      })),
   };
+}
+
+async function findOrderedActiveServices(
+  repository: QueueRepository,
+  barberShopId: string,
+  serviceIds: string[],
+) {
+  const services = await repository.findActiveServices({
+    barberShopId,
+    serviceIds,
+  });
+
+  if (services.length !== serviceIds.length) {
+    throw queueReferenceNotFound("service");
+  }
+
+  const servicesById = new Map(
+    services.map((service) => [service.id, service]),
+  );
+  return serviceIds.map((serviceId) => servicesById.get(serviceId)!);
 }
 
 export function appointmentStatusForQueueStatus(queueStatus: QueueStatus) {
@@ -159,4 +217,26 @@ function queueReferenceNotFound(reference: string) {
     code: "BAD_REQUEST",
     message: `Walk-in queue ticket references an inactive or missing ${reference}.`,
   });
+}
+
+function mapQueueCreateError(error: unknown) {
+  if (error instanceof ApiError) return error;
+
+  if (isUniqueConstraintError(error)) {
+    return new ApiError({
+      code: "CONFLICT",
+      message: "Client already exists for this barber shop.",
+    });
+  }
+
+  return error;
+}
+
+function isUniqueConstraintError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "P2002"
+  );
 }

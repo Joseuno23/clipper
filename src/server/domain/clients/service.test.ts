@@ -75,11 +75,11 @@ describe("client service", () => {
   it("lists active clients scoped to the authenticated tenant", async () => {
     const service = createClientService(repository);
 
-    await service.list(baseContext, { limit: 50, offset: 0 });
+    await service.list(baseContext, { limit: 50, offset: 0, query: null });
 
     expect(repository.list).toHaveBeenCalledWith({
       barberShopId: "shop_1",
-      pagination: { limit: 50, offset: 0 },
+      pagination: { limit: 50, offset: 0, query: null },
     });
   });
 

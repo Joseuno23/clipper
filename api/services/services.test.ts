@@ -125,13 +125,13 @@ describe("services API handlers", () => {
     const response = createResponse();
 
     await handler(
-      createRequest({ method: "GET", query: { limit: "10" } }),
+      createRequest({ method: "GET", query: { limit: "10", query: "Cut" } }),
       response,
     );
 
     expect(serviceRepository.list).toHaveBeenCalledWith({
       barberShopId: "shop_1",
-      pagination: { limit: 10, offset: 0 },
+      pagination: { limit: 10, offset: 0, query: "Cut" },
     });
     expect(response.body).toEqual({
       ok: true,

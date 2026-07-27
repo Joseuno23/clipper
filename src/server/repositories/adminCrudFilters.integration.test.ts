@@ -123,7 +123,7 @@ describe.skipIf(!hasDatabaseUrl)("admin CRUD repository filters", () => {
 
     const firstShopClients = await clientRepository.list({
       barberShopId: firstShopId,
-      pagination: { limit: 20, offset: 0 },
+      pagination: { limit: 20, offset: 0, query: null },
     });
 
     expect(firstShopClients.map(({ id }) => id)).toEqual([visibleClient.id]);
@@ -171,7 +171,7 @@ describe.skipIf(!hasDatabaseUrl)("admin CRUD repository filters", () => {
 
     const firstShopServices = await serviceRepository.list({
       barberShopId: firstShopId,
-      pagination: { limit: 20, offset: 0 },
+      pagination: { limit: 20, offset: 0, query: null },
     });
 
     expect(firstShopServices.map(({ id }) => id)).toEqual([visibleService.id]);

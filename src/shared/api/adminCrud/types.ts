@@ -10,6 +10,7 @@ export type AdminApiErrorEnvelope = {
 export type ListParams = {
   limit?: number;
   offset?: number;
+  query?: string;
 };
 
 export type CustomerDto = {
@@ -18,7 +19,9 @@ export type CustomerDto = {
   lastName: string;
   email: string | null;
   phone: string | null;
+  normalizedPhone?: string | null;
   documentNumber: string | null;
+  normalizedDocument?: string | null;
   notes: string | null;
   isBlocked: boolean;
   createdAt: string;

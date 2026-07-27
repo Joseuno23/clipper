@@ -62,11 +62,13 @@ export type NormalizedServiceUpdateInput =
 export type ServiceListInput = {
   limit?: number;
   offset?: number;
+  query?: string;
 };
 
 export type NormalizedServiceListInput = {
   limit: number;
   offset: number;
+  query: string | null;
 };
 
 export type ServiceRepository = {
