@@ -7,6 +7,7 @@ import {
   ArrowUpRight,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router";
 
 import { MetricCard } from "@/widgets/metrics/MetricCard";
 import { PageHeader } from "@/shared/components/PageHeader";
@@ -295,21 +296,21 @@ export function DashboardView() {
             </h2>
             <div className="grid grid-cols-2 gap-2">
               {[
-                { label: "Nueva cita", icon: Calendar },
-                { label: "Cobrar", icon: Wallet },
-                { label: "Cliente", icon: Users },
-                { label: "Cola", icon: Clock },
+                { label: "Nueva cita", icon: Calendar, to: "/appointments" },
+                { label: "Cobrar", icon: Wallet, to: "/sales" },
+                { label: "Cliente", icon: Users, to: "/customers" },
+                { label: "Cola", icon: Clock, to: "/queue" },
               ].map((q) => (
-                <button
+                <Link
                   key={q.label}
-                  type="button"
+                  to={q.to}
                   className="flex flex-col items-start gap-2 rounded-lg border border-border bg-surface/60 p-3 text-left transition-colors hover:border-border-strong hover:bg-surface"
                 >
                   <q.icon className="h-4 w-4 text-primary" />
                   <span className="text-xs font-medium text-foreground">
                     {q.label}
                   </span>
-                </button>
+                </Link>
               ))}
             </div>
           </div>

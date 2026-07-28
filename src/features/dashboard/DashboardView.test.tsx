@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
+import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { DashboardView } from "./DashboardView";
@@ -69,7 +70,9 @@ function renderDashboard() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <DashboardView />
+      <MemoryRouter>
+        <DashboardView />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -142,5 +145,21 @@ describe("DashboardView", () => {
     expect(screen.getByText("3 ventas cobradas")).toBeInTheDocument();
     expect(screen.getByText("ventas abiertas")).toBeInTheDocument();
     expect(screen.queryByText("Iván Soto sin disponibilidad")).toBeNull();
+    expect(screen.getByRole("link", { name: "Nueva cita" })).toHaveAttribute(
+      "href",
+      "/appointments",
+    );
+    expect(screen.getByRole("link", { name: "Cobrar" })).toHaveAttribute(
+      "href",
+      "/sales",
+    );
+    expect(screen.getByRole("link", { name: "Cliente" })).toHaveAttribute(
+      "href",
+      "/customers",
+    );
+    expect(screen.getByRole("link", { name: "Cola" })).toHaveAttribute(
+      "href",
+      "/queue",
+    );
   });
 });
