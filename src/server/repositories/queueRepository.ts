@@ -455,6 +455,10 @@ export const queueRepository: QueueRepository = {
           ...(movedTicketPlacement === undefined
             ? {}
             : { queuePosition: movedTicketPlacement.queuePosition }),
+          ...(effectiveQueueStatus === QueueStatus.IN_SERVICE &&
+          existing.queueStatus !== QueueStatus.IN_SERVICE
+            ? { checkedInAt: new Date() }
+            : {}),
           ...(data.clientId === undefined ? {} : { clientId: data.clientId }),
           ...(serviceDurationMinutes === undefined
             ? {}
@@ -996,6 +1000,7 @@ async function promoteWaitingTicketToChair(
       queueStatus: QueueStatus.IN_SERVICE,
       status: appointmentStatusForQueueStatus(QueueStatus.IN_SERVICE),
       queuePosition: 1,
+      checkedInAt: new Date(),
     },
     include: ticketInclude,
   })) as NonNullable<Awaited<ReturnType<QueueRepository["updateTicket"]>>>;

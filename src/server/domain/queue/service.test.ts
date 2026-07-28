@@ -153,6 +153,7 @@ describe("queue service", () => {
         totalActiveCount: 2,
       }),
     );
+    expect(result.queues[0].tickets[0].checkedInAt).toBe(now.toISOString());
     expect(result.queues[0].tickets[0].services).toEqual([
       {
         serviceId: "service_1",

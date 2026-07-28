@@ -109,9 +109,10 @@ function buildQueueEstimates(queue: StaffQueueDto, now: Date) {
   );
 
   if (chairTicket) {
-    const finishesAt = addMinutes(now, ticketDurationMinutes(chairTicket));
-    estimates.set(chairTicket.id, { startsAt: now, finishesAt });
-    cursor = finishesAt.getTime();
+    const startsAt = parseQueueEstimateStart(chairTicket, now);
+    const finishesAt = addMinutes(startsAt, ticketDurationMinutes(chairTicket));
+    estimates.set(chairTicket.id, { startsAt, finishesAt });
+    cursor = Math.max(finishesAt.getTime(), now.getTime());
   }
 
   queue.tickets
@@ -124,6 +125,26 @@ function buildQueueEstimates(queue: StaffQueueDto, now: Date) {
     });
 
   return estimates;
+}
+
+function parseQueueEstimateStart(ticket: QueueTicketDto, fallback: Date) {
+  const checkedInAt = parseQueueDate(ticket.checkedInAt);
+  if (checkedInAt) return checkedInAt;
+
+  const scheduledStartAt = parseQueueDate(ticket.startAt);
+  if (scheduledStartAt && scheduledStartAt.getTime() > fallback.getTime()) {
+    return scheduledStartAt;
+  }
+
+  return fallback;
+}
+
+function parseQueueDate(value: string | null | undefined) {
+  if (!value) return undefined;
+
+  const date = new Date(value);
+
+  return Number.isNaN(date.getTime()) ? undefined : date;
 }
 
 function ticketDurationMinutes(ticket: QueueTicketDto) {

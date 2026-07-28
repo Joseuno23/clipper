@@ -720,7 +720,7 @@ describe("QueueView ticket editing", () => {
 describe("QueueView queue time estimates", () => {
   it("shows the in-service ticket estimated finish time from its service duration", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    vi.setSystemTime(new Date(2026, 0, 1, 11, 0));
+    vi.setSystemTime(new Date("2026-01-01T16:00:00.000Z"));
     stubQueueFetch({
       queue: makeLiveQueue({
         tickets: [makeQueueTicket({ queueStatus: "IN_SERVICE" })],
@@ -732,9 +732,29 @@ describe("QueueView queue time estimates", () => {
     expect(await screen.findAllByText("Hasta 11:45")).not.toHaveLength(0);
   });
 
+  it("keeps the in-service estimate anchored to checked-in time after reload", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-01-01T16:00:00.000Z"));
+    stubQueueFetch({
+      queue: makeLiveQueue({
+        tickets: [
+          makeQueueTicket({
+            queueStatus: "IN_SERVICE",
+            checkedInAt: "2026-01-01T14:30:00.000Z",
+          }),
+        ],
+      }),
+    });
+
+    renderQueueView();
+
+    expect(await screen.findAllByText("Hasta 10:15")).not.toHaveLength(0);
+    expect(screen.queryByText("Hasta 11:45")).not.toBeInTheDocument();
+  });
+
   it("shows a waiting ticket approximate start and finish after the chair", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    vi.setSystemTime(new Date(2026, 0, 1, 11, 0));
+    vi.setSystemTime(new Date("2026-01-01T16:00:00.000Z"));
     stubQueueFetch({
       queue: makeLiveQueue({
         tickets: [
@@ -760,6 +780,41 @@ describe("QueueView queue time estimates", () => {
     renderQueueView();
 
     expect(await screen.findAllByText("11:45–12:05")).not.toHaveLength(0);
+  });
+
+  it("starts downstream waiting estimates from now when elapsed chair time is overdue", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date("2026-01-01T16:00:00.000Z"));
+    stubQueueFetch({
+      queue: makeLiveQueue({
+        tickets: [
+          makeQueueTicket({
+            queueStatus: "IN_SERVICE",
+            checkedInAt: "2026-01-01T15:00:00.000Z",
+          }),
+          makeQueueTicket({
+            id: "ticket_2",
+            clientName: "Bruno Díaz",
+            queuePosition: 2,
+            serviceDurationMinutes: 20,
+            services: [
+              {
+                serviceId: "service_2",
+                name: "Barba",
+                durationMinutes: 20,
+                price: "1500.00",
+              },
+            ],
+          }),
+        ],
+      }),
+    });
+
+    renderQueueView();
+
+    expect(await screen.findAllByText("Hasta 10:45")).not.toHaveLength(0);
+    expect(screen.getAllByText("11:00–11:20")).not.toHaveLength(0);
+    expect(screen.queryByText("10:45–11:05")).not.toBeInTheDocument();
   });
 
   it("sums multi-service durations for queue estimates", async () => {
@@ -1193,6 +1248,7 @@ function makeQueueTicket(
     endAt: "2026-01-01T12:45:00.000Z",
     queueStatus: "WAITING",
     queuedAt: "2026-01-01T12:00:00.000Z",
+    checkedInAt: null,
     queuePosition: 1,
     serviceName: "Corte clásico",
     serviceDurationMinutes: 45,

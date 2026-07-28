@@ -905,6 +905,7 @@ describe("queueRepository", () => {
         queueStatus: "IN_SERVICE",
         status: "IN_SERVICE",
         queuePosition: 1,
+        checkedInAt: expect.any(Date),
       },
     });
   });
@@ -1085,6 +1086,7 @@ describe("queueRepository", () => {
           queueStatus: "IN_SERVICE",
           status: "IN_SERVICE",
           queuePosition: 1,
+          checkedInAt: expect.any(Date),
         },
       }),
     );
@@ -1126,6 +1128,7 @@ describe("queueRepository", () => {
           queueStatus: "IN_SERVICE",
           status: "IN_SERVICE",
           queuePosition: 1,
+          checkedInAt: expect.any(Date),
         },
       }),
     );

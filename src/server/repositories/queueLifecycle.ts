@@ -42,6 +42,7 @@ type QueueLifecycleClient = {
         queuePosition?: number | null;
         queueStatus?: QueueStatus;
         status?: ReturnType<typeof appointmentStatusForQueueStatus>;
+        checkedInAt?: Date | null;
         cancellationReason?: string;
       };
     }): Promise<unknown>;
@@ -314,6 +315,7 @@ export async function promoteFirstWaitingTicket(
       queueStatus: QueueStatus.IN_SERVICE,
       status: appointmentStatusForQueueStatus(QueueStatus.IN_SERVICE),
       queuePosition: 1,
+      checkedInAt: new Date(),
     },
   });
 

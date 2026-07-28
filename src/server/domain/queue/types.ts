@@ -108,6 +108,7 @@ export type QueueTicketDto = {
   endAt: string;
   queueStatus: QueueStatus;
   queuedAt: string | null;
+  checkedInAt: string | null;
   queuePosition: number | null;
   serviceName: string | null;
   serviceDurationMinutes: number | null;

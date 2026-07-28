@@ -236,6 +236,7 @@ export function toQueueTicketDto(record: QueueTicketRecord): QueueTicketDto {
     endAt: record.endAt.toISOString(),
     queueStatus: record.queueStatus,
     queuedAt: record.queuedAt?.toISOString() ?? null,
+    checkedInAt: record.checkedInAt?.toISOString() ?? null,
     queuePosition: record.queuePosition,
     serviceName: primaryService?.serviceNameSnapshot ?? null,
     serviceDurationMinutes: primaryService?.serviceDurationSnapshot ?? null,

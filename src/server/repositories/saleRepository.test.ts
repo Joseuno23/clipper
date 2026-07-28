@@ -388,6 +388,7 @@ describe("saleRepository", () => {
         queueStatus: "IN_SERVICE",
         status: "IN_SERVICE",
         queuePosition: 1,
+        checkedInAt: expect.any(Date),
       },
     });
     expect(prisma.appointment.update).toHaveBeenCalledWith({
@@ -728,6 +729,7 @@ describe("saleRepository", () => {
         queueStatus: "IN_SERVICE",
         status: "IN_SERVICE",
         queuePosition: 1,
+        checkedInAt: expect.any(Date),
       },
     });
     expect(prisma.appointment.update).toHaveBeenCalledWith({

@@ -230,6 +230,7 @@ function makeAppointment(
     endAt: "2026-01-15T14:45:00.000Z",
     queueStatus: "NOT_QUEUED",
     queuedAt: null,
+    checkedInAt: null,
     queuePosition: null,
     serviceName: "Corte clásico",
     serviceDurationMinutes: 45,
