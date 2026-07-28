@@ -23,6 +23,7 @@ export type AuthUser = {
 
 export type AuthTenant = {
   barberShopId: string;
+  name: string;
   slug: string;
   timezone: string;
   currency: string;
@@ -43,6 +44,10 @@ export type AuthContextResponse = {
 
 export type LoginResponse = AuthContextResponse & {
   token: string;
+};
+
+export const authKeys = {
+  me: ["auth", "me"] as const,
 };
 
 type ApiEnvelope<T> =

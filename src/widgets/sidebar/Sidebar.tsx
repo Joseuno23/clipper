@@ -1,4 +1,5 @@
 import { NavLink, useLocation } from "react-router";
+import { useQuery } from "@tanstack/react-query";
 import {
   LayoutDashboard,
   Calendar,
@@ -14,6 +15,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { authKeys, me } from "@/shared/api/auth";
+import { UserAccountMenu } from "@/widgets/user-menu/UserAccountMenu";
 
 interface NavItem {
   label: string;
@@ -110,6 +113,8 @@ function NavGroup({
 
 export function Sidebar() {
   const { pathname } = useLocation();
+  const authQuery = useQuery({ queryKey: authKeys.me, queryFn: me });
+  const shopName = authQuery.data?.tenant.name ?? "Barbería";
 
   return (
     <aside className="hidden h-screen w-[244px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
@@ -121,9 +126,7 @@ export function Sidebar() {
           <p className="font-display text-sm font-semibold text-sidebar-accent-foreground">
             Clipper
           </p>
-          <p className="text-[10px] text-sidebar-foreground/60">
-            Atelier Barber Co.
-          </p>
+          <p className="text-[10px] text-sidebar-foreground/60">{shopName}</p>
         </div>
       </div>
 
@@ -134,19 +137,7 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-sidebar-border p-3">
-        <div className="flex items-center gap-3 rounded-lg bg-sidebar-accent/60 p-2.5">
-          <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary text-xs font-semibold text-primary-foreground">
-            SC
-          </div>
-          <div className="min-w-0 flex-1 leading-tight">
-            <p className="truncate text-xs font-semibold text-sidebar-accent-foreground">
-              Sofía Castro
-            </p>
-            <p className="truncate text-[10px] text-sidebar-foreground/60">
-              Admin · growth plan
-            </p>
-          </div>
-        </div>
+        <UserAccountMenu variant="sidebar" />
       </div>
     </aside>
   );

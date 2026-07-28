@@ -14,6 +14,7 @@ const context = {
   },
   tenant: {
     barberShopId: "shop_1",
+    name: "Niche 72",
     slug: "clipper",
     timezone: "America/Argentina/Buenos_Aires",
     currency: "ARS",

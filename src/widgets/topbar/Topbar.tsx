@@ -1,6 +1,7 @@
-import { Search, Bell, Plus, Moon, Sun } from "lucide-react";
+import { Search, Bell, Moon, Sun } from "lucide-react";
 import { useTheme } from "@/app/theme/themeContext";
 import { Button } from "@/components/ui/button";
+import { UserAccountMenu } from "@/widgets/user-menu/UserAccountMenu";
 
 export function Topbar() {
   const { theme, toggle } = useTheme();
@@ -41,10 +42,7 @@ export function Topbar() {
           <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-primary" />
         </Button>
         <div className="mx-1 hidden h-6 w-px bg-border sm:block" />
-        <Button size="sm" className="gap-1.5">
-          <Plus className="h-4 w-4" />
-          <span className="hidden sm:inline">Nueva cita</span>
-        </Button>
+        <UserAccountMenu />
       </div>
     </header>
   );

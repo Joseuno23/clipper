@@ -23,6 +23,7 @@ const authSelection = {
       barberShop: {
         select: {
           id: true,
+          name: true,
           slug: true,
           timezone: true,
           currency: true,
@@ -157,6 +158,7 @@ type AuthRepositoryUser = {
     isActive: boolean;
     barberShop: {
       id: string;
+      name: string;
       slug: string;
       timezone: string;
       currency: string;
@@ -184,6 +186,7 @@ function mapAuthCandidate(
     },
     tenant: {
       barberShopId: shop.id,
+      name: shop.name,
       slug: shop.slug,
       timezone: shop.timezone,
       currency: shop.currency,

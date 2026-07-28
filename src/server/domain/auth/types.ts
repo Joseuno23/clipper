@@ -19,6 +19,7 @@ export type SafeAuthUser = {
 
 export type SafeAuthTenant = {
   barberShopId: string;
+  name: string;
   slug: string;
   timezone: string;
   currency: string;

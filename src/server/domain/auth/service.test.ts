@@ -27,6 +27,7 @@ const candidate: AuthLoginCandidate = {
   },
   tenant: {
     barberShopId: "shop_1",
+    name: "Niche 72",
     slug: "niche-72",
     timezone: "America/Argentina/Buenos_Aires",
     currency: "ARS",
