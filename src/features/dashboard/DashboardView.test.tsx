@@ -220,13 +220,35 @@ describe("DashboardView", () => {
       "href",
       "/queue",
     );
+    // With zero-fill the last-7-days preset always renders 7 buckets, so the
+    // empty-state copy is no longer shown even when no day had sales.
     expect(
-      screen.getByText("No hay ventas para el rango seleccionado."),
-    ).toBeInTheDocument();
+      screen.queryByText("No hay ventas para el rango seleccionado."),
+    ).toBeNull();
+    const bars = await screen.findAllByTestId("sales-bar");
+    expect(bars).toHaveLength(7);
+    expect(bars.every((bar) => /: 0$/.test(bar.textContent ?? ""))).toBe(true);
   });
 
-  it("renders the sales-by-day chart from report days and queries last 7 days by default", async () => {
+  it("zero-fills exactly 7 buckets for the default last-7-days preset", async () => {
     stubSupportingQueries();
+
+    // Compute the business-timezone date keys for today and today-6 so the
+    // report rows land inside the queried window regardless of when this runs.
+    const key = (d: Date) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Bogota",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(d);
+    const today = new Date();
+    const from = new Date(today);
+    from.setDate(from.getDate() - 6);
+    const todayKey = key(today);
+    const fromKey = key(from);
+
+    // Only two of the seven days have sales; the rest must be zero-filled.
     reportsSales.mockResolvedValue({
       summary: {
         totalRevenue: "300.00",
@@ -237,8 +259,8 @@ describe("DashboardView", () => {
         quantityTotal: 0,
       },
       days: [
-        { date: "2026-07-27", totalRevenue: "100.00", items: [] },
-        { date: "2026-07-28", totalRevenue: "200.00", items: [] },
+        { date: fromKey, totalRevenue: "100.00", items: [] },
+        { date: todayKey, totalRevenue: "200.00", items: [] },
       ],
     });
 
@@ -246,14 +268,24 @@ describe("DashboardView", () => {
 
     expect(await screen.findByText("Ventas por día")).toBeInTheDocument();
     const bars = await screen.findAllByTestId("sales-bar");
-    expect(bars).toHaveLength(2);
-    expect(bars[0]).toHaveTextContent("27 de jul: 100");
-    expect(bars[1]).toHaveTextContent("28 de jul: 200");
+    // Always exactly 7 days.
+    expect(bars).toHaveLength(7);
+    // First and last buckets carry the two reported totals.
+    expect(bars[0]).toHaveTextContent(": 100");
+    expect(bars[6]).toHaveTextContent(": 200");
+    // The five interior buckets are zero-filled.
+    const zeroBars = bars.filter((bar) => /: 0$/.test(bar.textContent ?? ""));
+    expect(zeroBars).toHaveLength(5);
 
     // Default preset is "last 7 days": today minus 6 days through today.
-    const today = new Date();
-    const from = new Date(today);
-    from.setDate(from.getDate() - 6);
+    expect(reportsSales).toHaveBeenCalledWith(
+      expect.objectContaining({ from: fromKey, to: todayKey }),
+    );
+  });
+
+  it("zero-fills the elapsed days of the current month for the Mes preset", async () => {
+    stubSupportingQueries();
+
     const key = (d: Date) =>
       new Intl.DateTimeFormat("en-CA", {
         timeZone: "America/Bogota",
@@ -261,10 +293,114 @@ describe("DashboardView", () => {
         month: "2-digit",
         day: "2-digit",
       }).format(d);
+    const today = new Date();
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    const fromKey = key(monthStart);
+    const toKey = key(today);
+    // Elapsed days = inclusive day count between the resolved from/to keys.
+    const dayCount = (a: string, b: string) =>
+      Math.round(
+        (new Date(`${b}T12:00:00.000Z`).getTime() -
+          new Date(`${a}T12:00:00.000Z`).getTime()) /
+          86_400_000,
+      ) + 1;
+    const elapsedDays = dayCount(fromKey, toKey);
 
-    expect(reportsSales).toHaveBeenCalledWith(
-      expect.objectContaining({ from: key(from), to: key(today) }),
-    );
+    reportsSales.mockResolvedValue({
+      summary: {
+        totalRevenue: "500.00",
+        servicesRevenue: "0",
+        productsRevenue: "0",
+        orderCount: 0,
+        itemLineCount: 0,
+        quantityTotal: 0,
+      },
+      // Only the first day of the month has a sale.
+      days: [{ date: fromKey, totalRevenue: "500.00", items: [] }],
+    });
+
+    renderDashboard();
+
+    await screen.findByText("Ventas por día");
+    await userEvent.click(screen.getByRole("button", { name: "Mes" }));
+
+    await waitFor(() => {
+      expect(reportsSales).toHaveBeenCalledWith(
+        expect.objectContaining({ from: fromKey, to: toKey }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("sales-bar")).toHaveLength(elapsedDays);
+    });
+    const bars = screen.getAllByTestId("sales-bar");
+    // First day carries the reported total, every other elapsed day is zero.
+    expect(bars[0]).toHaveTextContent(": 500");
+    const zeroBars = bars.filter((bar) => /: 0$/.test(bar.textContent ?? ""));
+    expect(zeroBars).toHaveLength(elapsedDays - 1);
+  });
+
+  it("aggregates daily totals into elapsed months for the Año preset", async () => {
+    stubSupportingQueries();
+
+    const key = (d: Date) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Bogota",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(d);
+    const today = new Date();
+    const yearStart = new Date(today.getFullYear(), 0, 1);
+    const fromKey = key(yearStart);
+    const toKey = key(today);
+    // Elapsed months = start month through the current business-tz month,
+    // derived from the resolved keys so it holds under any test timezone.
+    const startYear = Number(fromKey.slice(0, 4));
+    const startMonth = Number(fromKey.slice(5, 7));
+    const endYear = Number(toKey.slice(0, 4));
+    const endMonth = Number(toKey.slice(5, 7));
+    const elapsedMonths =
+      (endYear - startYear) * 12 + (endMonth - startMonth) + 1;
+    // Place both sales in the first bucket's month so they aggregate together.
+    const firstMonthKey = fromKey.slice(0, 7);
+
+    // Two sales in the same (first) month must aggregate into one month bucket.
+    reportsSales.mockResolvedValue({
+      summary: {
+        totalRevenue: "700.00",
+        servicesRevenue: "0",
+        productsRevenue: "0",
+        orderCount: 0,
+        itemLineCount: 0,
+        quantityTotal: 0,
+      },
+      days: [
+        { date: `${firstMonthKey}-05`, totalRevenue: "300.00", items: [] },
+        { date: `${firstMonthKey}-20`, totalRevenue: "400.00", items: [] },
+      ],
+    });
+
+    renderDashboard();
+
+    await screen.findByText("Ventas por día");
+    await userEvent.click(screen.getByRole("button", { name: "Año" }));
+
+    await waitFor(() => {
+      expect(reportsSales).toHaveBeenCalledWith(
+        expect.objectContaining({ from: fromKey, to: toKey }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId("sales-bar")).toHaveLength(elapsedMonths);
+    });
+    const bars = screen.getAllByTestId("sales-bar");
+    // January aggregates 300 + 400 = 700.
+    expect(bars[0]).toHaveTextContent(": 700");
+    // Every other elapsed month is zero-filled.
+    const zeroBars = bars.filter((bar) => /: 0$/.test(bar.textContent ?? ""));
+    expect(zeroBars).toHaveLength(elapsedMonths - 1);
   });
 
   it("changes the reports query range when a filter is selected", async () => {

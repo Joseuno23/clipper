@@ -98,8 +98,93 @@ const salesAxisDate = new Intl.DateTimeFormat("es-CO", {
   month: "short",
 });
 
+const salesAxisMonth = new Intl.DateTimeFormat("es-CO", {
+  timeZone: "UTC",
+  month: "short",
+});
+
 function salesDayLabel(dateKey: string) {
   return salesAxisDate.format(new Date(`${dateKey}T12:00:00.000Z`));
+}
+
+function salesMonthLabel(monthKey: string) {
+  return salesAxisMonth.format(new Date(`${monthKey}-01T12:00:00.000Z`));
+}
+
+type SalesChartPoint = { key: string; label: string; totalRevenue: number };
+
+/**
+ * Adds `days` calendar days to a `YYYY-MM-DD` key using UTC-noon arithmetic so
+ * DST transitions never shift the resulting date.
+ */
+function addDaysToKey(dateKey: string, days: number) {
+  const base = new Date(`${dateKey}T12:00:00.000Z`);
+  base.setUTCDate(base.getUTCDate() + days);
+  return base.toISOString().slice(0, 10);
+}
+
+/**
+ * Builds the complete, zero-filled chart series for the selected range from the
+ * report's sparse daily rows (the API only returns days that had sales).
+ *
+ * - last7/month: one bucket per elapsed day between `from` and `to`, inclusive.
+ * - year: one bucket per elapsed month (January → current month), summing each
+ *   day's revenue into its month.
+ */
+function buildSalesChartData(
+  range: SalesRange,
+  params: { from: string; to: string },
+  days: { date: string; totalRevenue: string }[],
+): SalesChartPoint[] {
+  const revenueByDay = new Map<string, number>();
+  for (const day of days) {
+    revenueByDay.set(
+      day.date,
+      (revenueByDay.get(day.date) ?? 0) + Number(day.totalRevenue),
+    );
+  }
+
+  if (range === "year") {
+    const revenueByMonth = new Map<string, number>();
+    for (const [dateKey, revenue] of revenueByDay) {
+      const monthKey = dateKey.slice(0, 7);
+      revenueByMonth.set(
+        monthKey,
+        (revenueByMonth.get(monthKey) ?? 0) + revenue,
+      );
+    }
+
+    const points: SalesChartPoint[] = [];
+    const startMonth = params.from.slice(0, 7);
+    const endMonth = params.to.slice(0, 7);
+    let cursor = `${startMonth}-01`;
+    while (cursor.slice(0, 7) <= endMonth) {
+      const monthKey = cursor.slice(0, 7);
+      points.push({
+        key: monthKey,
+        label: salesMonthLabel(monthKey),
+        totalRevenue: revenueByMonth.get(monthKey) ?? 0,
+      });
+      // Jump to the first of the next month.
+      const [year, month] = monthKey.split("-").map(Number);
+      const nextMonth = month === 12 ? 1 : month + 1;
+      const nextYear = month === 12 ? year + 1 : year;
+      cursor = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+    }
+    return points;
+  }
+
+  const points: SalesChartPoint[] = [];
+  let cursor = params.from;
+  while (cursor <= params.to) {
+    points.push({
+      key: cursor,
+      label: salesDayLabel(cursor),
+      totalRevenue: revenueByDay.get(cursor) ?? 0,
+    });
+    cursor = addDaysToKey(cursor, 1);
+  }
+  return points;
 }
 
 export function DashboardView() {
@@ -140,11 +225,15 @@ export function DashboardView() {
     queryKey: reportKeys.sales(salesRangeParams),
     queryFn: () => reportsApi.sales(salesRangeParams),
   });
-  const salesChartData = (salesByDayQuery.data?.days ?? []).map((day) => ({
-    date: day.date,
-    label: salesDayLabel(day.date),
-    totalRevenue: Number(day.totalRevenue),
-  }));
+  const salesChartData = useMemo(
+    () =>
+      buildSalesChartData(
+        salesRange,
+        salesRangeParams,
+        salesByDayQuery.data?.days ?? [],
+      ),
+    [salesRange, salesRangeParams, salesByDayQuery.data?.days],
+  );
 
   const todays = appointmentsQuery.data ?? [];
   const openSales = openSalesQuery.data ?? [];
