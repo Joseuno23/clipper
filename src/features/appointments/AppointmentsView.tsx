@@ -18,13 +18,7 @@ import { queueApi, queueKeys } from "@/shared/api/queue";
 import { salesKeys } from "@/shared/api/sales";
 import { businessDateInputValue } from "@/shared/lib/businessLocale";
 import { time, initials } from "@/shared/lib/format";
-import {
-  Calendar,
-  CalendarClock,
-  Filter,
-  Plus,
-  MoreHorizontal,
-} from "lucide-react";
+import { Calendar, CalendarClock, Filter, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 100;
@@ -205,22 +199,6 @@ export function AppointmentsView() {
       header: "Estado",
       cell: (a) => (
         <StatusBadge tone={TONE[a.status]}>{LABEL[a.status]}</StatusBadge>
-      ),
-    },
-    {
-      key: "actions",
-      header: "",
-      align: "right",
-      width: "60px",
-      cell: () => (
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          aria-label="Acciones"
-        >
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
       ),
     },
   ];

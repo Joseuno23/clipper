@@ -37,9 +37,9 @@ export function Topbar() {
           size="icon"
           aria-label="Notificaciones"
           className="relative"
+          disabled
         >
           <Bell className="h-4 w-4" />
-          <span className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-primary" />
         </Button>
         <div className="mx-1 hidden h-6 w-px bg-border sm:block" />
         <UserAccountMenu />

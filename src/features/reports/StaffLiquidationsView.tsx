@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, ReceiptText } from "lucide-react";
+import { ChevronDown, Download, ReceiptText } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/shared/components/PageHeader";
@@ -14,6 +14,7 @@ import { currency, longDate } from "@/shared/lib/format";
 import { businessDateInputValue } from "@/shared/lib/businessLocale";
 
 import { reportLoadErrorMessage } from "./reportError";
+import { downloadCsv, staffLiquidationCsvRows } from "./reportDownload";
 
 export function StaffLiquidationsView() {
   const today = useMemo(() => todayInputValue(), []);
@@ -45,12 +46,34 @@ export function StaffLiquidationsView() {
     }),
     { sold: 0, commission: 0, orders: 0, lines: 0 },
   );
+  const canDownload = Boolean(reportQuery.data && summaries.length > 0);
+
+  function handleDownload() {
+    if (!reportQuery.data) return;
+
+    downloadCsv(
+      `liquidacion-staff-${from}-${to}.csv`,
+      staffLiquidationCsvRows(reportQuery.data),
+    );
+  }
 
   return (
     <>
       <PageHeader
         title="Liquidación de staff"
         description="Servicios cobrados por profesional y comisión a pagar. Productos excluidos."
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={!canDownload}
+            onClick={handleDownload}
+          >
+            <Download className="h-4 w-4" /> Descargar
+          </Button>
+        }
       />
 
       <section className="space-y-5">

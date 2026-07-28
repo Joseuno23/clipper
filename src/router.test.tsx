@@ -43,7 +43,7 @@ describe("React Router route behavior", () => {
     renderRoute("/dashboard");
 
     expect(
-      await screen.findByRole("heading", { name: "Buenos días, Sofía" }),
+      await screen.findByRole("heading", { name: "Buenos días, equipo" }),
     ).toBeInTheDocument();
   });
 

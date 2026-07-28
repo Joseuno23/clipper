@@ -130,12 +130,13 @@ export function LoginPage() {
                   </button>
                 }
                 action={
-                  <a
-                    href="#"
-                    className="text-xs text-muted-foreground hover:text-foreground"
+                  <button
+                    type="button"
+                    disabled
+                    className="text-xs text-muted-foreground opacity-60"
                   >
-                    ¿Olvidaste?
-                  </a>
+                    ¿Olvidaste? Próximamente
+                  </button>
                 }
               >
                 <input
@@ -186,21 +187,23 @@ export function LoginPage() {
 
               <button
                 type="button"
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-border bg-surface text-sm font-medium transition-colors hover:bg-surface-elevated"
+                disabled
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-border bg-surface text-sm font-medium opacity-60"
               >
                 <GoogleIcon className="h-4 w-4" />
-                Continuar con Google
+                Continuar con Google · Próximamente
               </button>
             </form>
 
             <p className="mt-8 text-center text-xs text-muted-foreground">
               ¿Nueva barbería?{" "}
-              <a
-                href="#"
-                className="text-foreground underline-offset-4 hover:underline"
+              <button
+                type="button"
+                disabled
+                className="text-foreground opacity-60"
               >
-                Solicitar acceso
-              </a>
+                Solicitar acceso próximamente
+              </button>
             </p>
           </div>
 

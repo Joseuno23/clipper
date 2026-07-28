@@ -24,28 +24,56 @@ function renderLoginRoute() {
 describe("LoginPage auth wiring", () => {
   it("logs in, stores auth, and navigates to the dashboard", async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.fn().mockResolvedValue(
-      Response.json({
-        ok: true,
-        data: {
-          token: "jwt_1",
-          user: {
-            id: "user_1",
-            email: "admin@clipper.test",
-            displayName: "Admin User",
-            status: "ACTIVE",
-          },
-          tenant: {
-            barberShopId: "shop_1",
-            slug: "niche-72",
-            timezone: "America/Argentina/Buenos_Aires",
-            currency: "ARS",
-          },
-          membership: { id: "member_1", role: "OWNER", status: "ACTIVE" },
-          tokenClaims: {},
-        },
-      }),
-    );
+    const authData = {
+      token: "jwt_1",
+      user: {
+        id: "user_1",
+        email: "admin@clipper.test",
+        displayName: "Admin User",
+        status: "ACTIVE",
+      },
+      tenant: {
+        barberShopId: "shop_1",
+        name: "Clipper Test",
+        slug: "niche-72",
+        timezone: "America/Argentina/Buenos_Aires",
+        currency: "ARS",
+      },
+      membership: { id: "member_1", role: "OWNER", status: "ACTIVE" },
+      tokenClaims: {},
+    };
+    const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url === "/api/auth/login") {
+        return Promise.resolve(Response.json({ ok: true, data: authData }));
+      }
+
+      if (url === "/api/auth/me") {
+        const { token: _token, ...meData } = authData;
+        return Promise.resolve(Response.json({ ok: true, data: meData }));
+      }
+
+      if (url.startsWith("/api/reports/sales")) {
+        return Promise.resolve(
+          Response.json({
+            ok: true,
+            data: {
+              summary: { totalRevenue: "0.00", orderCount: 0 },
+              days: [],
+            },
+          }),
+        );
+      }
+
+      if (url === "/api/queue") {
+        return Promise.resolve(
+          Response.json({ ok: true, data: { queues: [] } }),
+        );
+      }
+
+      return Promise.resolve(Response.json({ ok: true, data: [] }));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     renderLoginRoute();
@@ -73,7 +101,7 @@ describe("LoginPage auth wiring", () => {
       });
     });
     expect(
-      await screen.findByRole("heading", { name: "Buenos días, Sofía" }),
+      await screen.findByRole("heading", { name: "Buenos días, Admin User" }),
     ).toBeInTheDocument();
   });
 

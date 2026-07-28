@@ -58,6 +58,27 @@ vi.mock("@/shared/api/adminCrud", () => ({
   productsApi: { list: productsList },
 }));
 
+vi.mock("@/shared/api/auth", () => ({
+  authKeys: { me: ["auth", "me"] },
+  me: vi.fn().mockResolvedValue({
+    user: {
+      id: "user_1",
+      email: "admin@clipper.test",
+      displayName: "Admin User",
+      status: "ACTIVE",
+    },
+    tenant: {
+      barberShopId: "shop_1",
+      name: "Clipper Test",
+      slug: "niche-72",
+      timezone: "America/Argentina/Buenos_Aires",
+      currency: "ARS",
+    },
+    membership: { id: "member_1", role: "OWNER", status: "ACTIVE" },
+    tokenClaims: {},
+  }),
+}));
+
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
@@ -139,6 +160,9 @@ describe("DashboardView", () => {
 
     renderDashboard();
 
+    expect(
+      await screen.findByRole("heading", { name: "Buenos días, Admin User" }),
+    ).toBeInTheDocument();
     expect(await screen.findByText("Ada Lovelace")).toBeInTheDocument();
     expect(screen.getByText(/Classic Cut/)).toBeInTheDocument();
     expect(screen.getByText("Pomade")).toBeInTheDocument();

@@ -1,6 +1,8 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Download } from "lucide-react";
 
+import { Button } from "@/components/ui/button";
 import { PageHeader } from "@/shared/components/PageHeader";
 import {
   adminCrudKeys,
@@ -16,6 +18,7 @@ import { businessDateInputValue } from "@/shared/lib/businessLocale";
 import { currency, longDate } from "@/shared/lib/format";
 
 import { reportLoadErrorMessage } from "./reportError";
+import { downloadCsv, salesReportCsvRows } from "./reportDownload";
 
 export function SalesReportView() {
   const today = useMemo(() => businessDateInputValue(), []);
@@ -41,12 +44,34 @@ export function SalesReportView() {
 
   const summary = reportQuery.data?.summary;
   const days = reportQuery.data?.days ?? [];
+  const canDownload = Boolean(reportQuery.data && days.length > 0);
+
+  function handleDownload() {
+    if (!reportQuery.data) return;
+
+    downloadCsv(
+      `reporte-ventas-${from}-${to}.csv`,
+      salesReportCsvRows(reportQuery.data),
+    );
+  }
 
   return (
     <>
       <PageHeader
         title="Reporte de ventas"
         description="Ventas cobradas por día, incluyendo servicios y productos."
+        actions={
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={!canDownload}
+            onClick={handleDownload}
+          >
+            <Download className="h-4 w-4" /> Descargar
+          </Button>
+        }
       />
 
       <section className="space-y-5">

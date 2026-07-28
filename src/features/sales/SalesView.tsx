@@ -169,8 +169,8 @@ export function SalesView() {
         description="Tickets abiertos, cobros y ventas del día con servicios + retail."
         actions={
           <>
-            <Button variant="outline" size="sm" className="gap-1.5">
-              <Receipt className="h-4 w-4" /> Cierre de caja
+            <Button variant="outline" size="sm" className="gap-1.5" disabled>
+              <Receipt className="h-4 w-4" /> Cierre de caja · Próximamente
             </Button>
             <Button
               size="sm"

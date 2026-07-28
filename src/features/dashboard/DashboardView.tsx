@@ -14,6 +14,7 @@ import { PageHeader } from "@/shared/components/PageHeader";
 import { StatusBadge } from "@/shared/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { adminCrudKeys, productsApi } from "@/shared/api/adminCrud";
+import { authKeys, me } from "@/shared/api/auth";
 import { appointmentKeys, appointmentsApi } from "@/shared/api/appointments";
 import { queueApi, queueKeys } from "@/shared/api/queue";
 import { reportKeys, reportsApi } from "@/shared/api/reports";
@@ -68,6 +69,7 @@ export function DashboardView() {
     queryKey: adminCrudKeys.productsList({ limit: 100, offset: 0 }),
     queryFn: () => productsApi.list({ limit: 100, offset: 0 }),
   });
+  const authQuery = useQuery({ queryKey: authKeys.me, queryFn: me });
 
   const todays = appointmentsQuery.data ?? [];
   const openSales = openSalesQuery.data ?? [];
@@ -101,19 +103,23 @@ export function DashboardView() {
   const completedAppointments = todays.filter(
     (appointment) => appointment.status === "COMPLETED",
   ).length;
+  const displayName = authQuery.data?.user.displayName?.trim();
+  const greetingName = displayName || authQuery.data?.user.email || "equipo";
 
   return (
     <>
       <PageHeader
         eyebrow="Operación · Hoy"
-        title="Buenos días, Sofía"
+        title={`Buenos días, ${greetingName}`}
         description={`Resumen ejecutivo del ${today.toLocaleDateString("es-AR", { weekday: "long", day: "numeric", month: "long" })}.`}
         actions={
           <>
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" disabled>
               Exportar
             </Button>
-            <Button size="sm">Abrir caja</Button>
+            <Button asChild size="sm">
+              <Link to="/sales">Abrir caja</Link>
+            </Button>
           </>
         }
       />
@@ -174,8 +180,10 @@ export function DashboardView() {
                   : `${todays.length} citas programadas`}
               </p>
             </div>
-            <Button variant="ghost" size="sm" className="gap-1 text-xs">
-              Ver agenda <ArrowUpRight className="h-3.5 w-3.5" />
+            <Button asChild variant="ghost" size="sm" className="gap-1 text-xs">
+              <Link to="/appointments">
+                Ver agenda <ArrowUpRight className="h-3.5 w-3.5" />
+              </Link>
             </Button>
           </div>
           <ul className="divide-y divide-border/60">
