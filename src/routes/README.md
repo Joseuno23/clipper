@@ -20,7 +20,8 @@ router; creating a `.tsx` file here does not automatically create a URL.
 | `/` | `/dashboard` | Redirects with `<Navigate replace />`. |
 | `/login` | `LoginPage` | Public screen; no `AppShell`. |
 | App routes | `/dashboard`, `/appointments`, `/queue`, `/sales` | Render existing feature views inside `AppShell`. |
-| Module stubs | `/customers`, `/services`, `/products`, `/staff`, `/reports`, `/settings` | Render preserved Lovable-generated stubs inside `AppShell`. |
+| Reports | `/reports/staff-liquidations`, `/reports/sales` | Render separated staff liquidation and sales report views inside `AppShell`; `/reports` redirects to staff liquidation. |
+| Module stubs | `/customers`, `/services`, `/products`, `/staff`, `/settings` | Render preserved Lovable-generated stubs inside `AppShell`. |
 | `*` | unknown paths | Renders the Spanish not-found screen with a dashboard link. |
 
 There is no generated `routeTree.gen.ts`, TanStack Start root route, or

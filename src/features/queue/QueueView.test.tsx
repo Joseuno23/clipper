@@ -1,11 +1,20 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { clearAuthSession, saveAuthSession } from "@/shared/api/auth";
 import type { CustomerDto, ServiceDto, StaffDto } from "@/shared/api/adminCrud";
 import type { LiveQueuesDto, QueueTicketDto } from "@/shared/api/queue";
+import { businessDateTimeToIso } from "@/shared/lib/businessLocale";
 
 vi.mock("@/components/ui/select", async () => {
   const React = await import("react");
@@ -373,6 +382,73 @@ describe("QueueView new walk-in client search", () => {
     expect(await screen.findByText("Visible Client")).toBeInTheDocument();
     expect(screen.queryByText("Blocked Client")).not.toBeInTheDocument();
   });
+
+  it("submits a scheduled appointment from Nueva cita", async () => {
+    const existingCustomer = makeCustomer({ id: "client_existing" });
+    const fetchMock = stubQueueFetch({ clients: [existingCustomer] });
+
+    renderQueueView();
+    await screen.findByText("No hay staff activo para mostrar");
+    await userEvent.click(screen.getByRole("button", { name: "Nueva cita" }));
+
+    await userEvent.type(screen.getByLabelText("Cliente"), "20123456");
+    await userEvent.click(await screen.findByText("Ana Paz"));
+    const selectedDate = await selectAppointmentDateFromPicker();
+    await selectOption("Hora", "15:00");
+    await addService("Corte clásico");
+    await selectOption("Staff asignado", "Ana Barber");
+    await userEvent.click(screen.getByRole("button", { name: "Crear cita" }));
+
+    await waitFor(() => expect(findAppointmentPost(fetchMock)).toBeDefined());
+    expect(JSON.parse(String(findAppointmentPost(fetchMock)?.body))).toEqual({
+      serviceIds: ["service_1"],
+      staffMemberId: "staff_1",
+      client: { kind: "existing", clientId: "client_existing" },
+      startAt: businessDateTimeToIso(selectedDate, "15:00"),
+    });
+  });
+
+  it("blocks scheduled appointment submission without date and time", async () => {
+    const existingCustomer = makeCustomer({ id: "client_existing" });
+    const fetchMock = stubQueueFetch({ clients: [existingCustomer] });
+
+    renderQueueView();
+    await screen.findByText("No hay staff activo para mostrar");
+    await userEvent.click(screen.getByRole("button", { name: "Nueva cita" }));
+
+    await userEvent.type(screen.getByLabelText("Cliente"), "20123456");
+    await userEvent.click(await screen.findByText("Ana Paz"));
+    await addService("Corte clásico");
+    await selectOption("Staff asignado", "Ana Barber");
+    await userEvent.click(screen.getByRole("button", { name: "Crear cita" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Seleccioná fecha, hora, servicio y staff para crear la cita.",
+    );
+    expect(findAppointmentPost(fetchMock)).not.toBeDefined();
+  });
+
+  it("shows unavailable slot errors from appointment creation", async () => {
+    stubQueueFetch({
+      clients: [makeCustomer()],
+      appointmentError: "Staff member is unavailable at the requested time.",
+    });
+
+    renderQueueView();
+    await screen.findByText("No hay staff activo para mostrar");
+    await userEvent.click(screen.getByRole("button", { name: "Nueva cita" }));
+    await userEvent.type(screen.getByLabelText("Cliente"), "20123456");
+    await userEvent.click(await screen.findByText("Ana Paz"));
+    await selectAppointmentDateFromPicker();
+    await selectOption("Hora", "15:00");
+    await addService("Corte clásico");
+    await selectOption("Staff asignado", "Ana Barber");
+    await userEvent.click(screen.getByRole("button", { name: "Crear cita" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Staff member is unavailable at the requested time.",
+    );
+  });
 });
 
 describe("QueueView ticket editing", () => {
@@ -505,7 +581,7 @@ describe("QueueView ticket editing", () => {
     });
 
     renderQueueView();
-    await screen.findByText("Ana Paz · Corte clásico");
+    await screen.findByLabelText("Editar turno de Ana Paz");
 
     await userEvent.selectOptions(screen.getByRole("combobox"), "staff_2");
 
@@ -526,13 +602,35 @@ describe("QueueView ticket editing", () => {
 
     renderQueueView();
 
+    await screen.findByLabelText("Editar turno de Ana Paz");
+
+    const controls = screen.getByLabelText("Controles de Ana Paz");
     expect(
-      await screen.findByText("Ana Paz · Corte clásico"),
+      within(controls).getByRole("button", { name: "Pasar a silla" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Bajar turno de Ana Paz" }),
+      within(controls).getByRole("button", { name: "Bajar turno de Ana Paz" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).toHaveTextContent("Ana Barber");
+    expect(within(controls).getByRole("combobox")).toHaveTextContent(
+      "Ana Barber",
+    );
+  });
+
+  it("renders admin free waiting slots while keeping controls grouped below occupied slots", async () => {
+    stubQueueFetch({
+      queue: makeLiveQueue({ tickets: [makeQueueTicket()] }),
+    });
+
+    renderQueueView();
+
+    await screen.findByLabelText("Editar turno de Ana Paz");
+
+    expect(screen.getAllByLabelText(/Espera \d libre/)).toHaveLength(4);
+    expect(screen.getByLabelText("Espera 2 libre")).toBeInTheDocument();
+    expect(screen.getByLabelText("Espera 5 libre")).toBeInTheDocument();
+    expect(screen.getByLabelText("Controles de Ana Paz")).toContainElement(
+      screen.getByRole("button", { name: "Pasar a silla" }),
+    );
   });
 
   it("sends a PATCH when an in-service ticket is moved to another staff member", async () => {
@@ -556,6 +654,146 @@ describe("QueueView ticket editing", () => {
       staffMemberId: "staff_2",
     });
   });
+
+  it("opens the cancel ticket dialog and blocks an empty reason", async () => {
+    const fetchMock = stubQueueFetch({
+      queue: makeLiveQueue({ tickets: [makeQueueTicket()] }),
+    });
+
+    renderQueueView();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Cancelar turno" }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Cancelar turno",
+    });
+    expect(within(dialog).getByText("Ana Paz")).toBeInTheDocument();
+    expect(within(dialog).getByText("ticket_1")).toBeInTheDocument();
+
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Confirmar" }),
+    );
+
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "El motivo de cancelación es obligatorio.",
+    );
+    expect(findQueueCancelPost(fetchMock)).not.toBeDefined();
+  });
+
+  it("cancels a queue ticket with a reason and refreshes the live queue", async () => {
+    const fetchMock = stubQueueFetch({
+      queue: makeLiveQueue({ tickets: [makeQueueTicket()] }),
+    });
+
+    renderQueueView();
+
+    await screen.findByRole("button", { name: "Cancelar turno" });
+    fetchMock.mockClear();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Cancelar turno" }),
+    );
+
+    const dialog = await screen.findByRole("dialog", {
+      name: "Cancelar turno",
+    });
+    await userEvent.type(
+      within(dialog).getByLabelText("Motivo"),
+      "Cliente canceló",
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Confirmar" }),
+    );
+
+    await waitFor(() => expect(findQueueCancelPost(fetchMock)).toBeDefined());
+    expect(JSON.parse(String(findQueueCancelPost(fetchMock)?.body))).toEqual({
+      reason: "Cliente canceló",
+    });
+    await waitFor(() =>
+      expect(fetchMock).toHaveBeenCalledWith("/api/queue", expect.any(Object)),
+    );
+  });
+});
+
+describe("QueueView queue time estimates", () => {
+  it("shows the in-service ticket estimated finish time from its service duration", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 0, 1, 11, 0));
+    stubQueueFetch({
+      queue: makeLiveQueue({
+        tickets: [makeQueueTicket({ queueStatus: "IN_SERVICE" })],
+      }),
+    });
+
+    renderQueueView();
+
+    expect(await screen.findAllByText("Hasta 11:45")).not.toHaveLength(0);
+  });
+
+  it("shows a waiting ticket approximate start and finish after the chair", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 0, 1, 11, 0));
+    stubQueueFetch({
+      queue: makeLiveQueue({
+        tickets: [
+          makeQueueTicket({ queueStatus: "IN_SERVICE" }),
+          makeQueueTicket({
+            id: "ticket_2",
+            clientName: "Bruno Díaz",
+            queuePosition: 2,
+            serviceDurationMinutes: 20,
+            services: [
+              {
+                serviceId: "service_2",
+                name: "Barba",
+                durationMinutes: 20,
+                price: "1500.00",
+              },
+            ],
+          }),
+        ],
+      }),
+    });
+
+    renderQueueView();
+
+    expect(await screen.findAllByText("11:45–12:05")).not.toHaveLength(0);
+  });
+
+  it("sums multi-service durations for queue estimates", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 0, 1, 11, 0));
+    stubQueueFetch({
+      queue: makeLiveQueue({
+        tickets: [
+          makeQueueTicket({
+            queueStatus: "IN_SERVICE",
+            serviceDurationMinutes: 45,
+            services: [
+              {
+                serviceId: "service_cut",
+                name: "Corte",
+                durationMinutes: 30,
+                price: "2500.00",
+              },
+              {
+                serviceId: "service_beard",
+                name: "Barba",
+                durationMinutes: 20,
+                price: "1500.00",
+              },
+            ],
+          }),
+        ],
+      }),
+    });
+
+    renderQueueView();
+
+    expect(await screen.findAllByText("Hasta 11:50")).not.toHaveLength(0);
+  });
 });
 
 describe("QueueDisplayView", () => {
@@ -578,14 +816,46 @@ describe("QueueDisplayView", () => {
     expect(await screen.findByText("Ana Barber")).toBeInTheDocument();
     expect(screen.getByText("Ana Paz")).toBeInTheDocument();
     expect(screen.getByText("Bruno Díaz")).toBeInTheDocument();
-    expect(screen.getByText("Posición 2")).toBeInTheDocument();
+    expect(screen.getByText("Espera 2")).toBeInTheDocument();
     expect(screen.queryByRole("button")).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
     expect(screen.queryByText("Nuevo turno")).not.toBeInTheDocument();
   });
 
+  it("renders five waiting slots even when fewer are occupied", async () => {
+    stubQueueFetch({
+      queue: makeLiveQueue({
+        tickets: [
+          makeQueueTicket({ id: "ticket_1", queuePosition: 1 }),
+          makeQueueTicket({
+            id: "ticket_2",
+            clientName: "Bruno Díaz",
+            queuePosition: 2,
+          }),
+        ],
+      }),
+    });
+
+    renderQueueDisplayView();
+
+    expect(await screen.findByText("Ana Paz")).toBeInTheDocument();
+    expect(screen.getByText("Bruno Díaz")).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/Espera \d libre/)).toHaveLength(3);
+    expect(screen.getByLabelText("Espera 3 libre")).toBeInTheDocument();
+    expect(screen.getByLabelText("Espera 5 libre")).toBeInTheDocument();
+  });
+
+  it("renders all TV chair and waiting slots as free when none are occupied", async () => {
+    stubQueueFetch({ queue: makeLiveQueue() });
+
+    renderQueueDisplayView();
+
+    expect(await screen.findByLabelText("Silla libre")).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/Espera \d libre/)).toHaveLength(5);
+  });
+
   it("polls the live queue for TV refresh", async () => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
     const fetchMock = stubQueueFetch();
 
     renderQueueDisplayView({ refetchIntervalMs: 10 });
@@ -597,6 +867,80 @@ describe("QueueDisplayView", () => {
     });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/queue", expect.any(Object));
+  });
+
+  it("shows compact queue time estimates in the TV view", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date(2026, 0, 1, 11, 0));
+    stubQueueFetch({
+      queue: makeLiveQueue({
+        tickets: [
+          makeQueueTicket({ queueStatus: "IN_SERVICE" }),
+          makeQueueTicket({
+            id: "ticket_2",
+            clientName: "Bruno Díaz",
+            queuePosition: 2,
+            serviceDurationMinutes: 20,
+            services: [
+              {
+                serviceId: "service_2",
+                name: "Barba",
+                durationMinutes: 20,
+                price: "1500.00",
+              },
+            ],
+          }),
+        ],
+      }),
+    });
+
+    renderQueueDisplayView();
+
+    expect(await screen.findByText("Hasta 11:45")).toBeInTheDocument();
+    expect(screen.getByText("11:45–12:05")).toBeInTheDocument();
+  });
+
+  it("hides waiting tickets beyond the fifth slot in the TV view", async () => {
+    stubQueueFetch({
+      queue: makeLiveQueue({
+        tickets: Array.from({ length: 6 }, (_, index) =>
+          makeQueueTicket({
+            id: `ticket_${index + 1}`,
+            clientName: `Cliente ${index + 1}`,
+            queuePosition: index + 1,
+          }),
+        ),
+      }),
+    });
+
+    renderQueueDisplayView();
+
+    expect(await screen.findByText("Cliente 1")).toBeInTheDocument();
+    expect(screen.getByText("Cliente 5")).toBeInTheDocument();
+    expect(screen.queryByText("Cliente 6")).not.toBeInTheDocument();
+    expect(screen.queryByText("Espera 6")).not.toBeInTheDocument();
+  });
+
+  it("keeps the admin queue view unrestricted", async () => {
+    stubQueueFetch({
+      queue: makeLiveQueue({
+        tickets: Array.from({ length: 6 }, (_, index) =>
+          makeQueueTicket({
+            id: `ticket_${index + 1}`,
+            clientName: `Cliente ${index + 1}`,
+            queuePosition: index + 1,
+          }),
+        ),
+      }),
+    });
+
+    renderQueueView();
+
+    expect(await screen.findByText("Cliente 1")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Editar turno de Cliente 6" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Espera 6")).toBeInTheDocument();
   });
 });
 
@@ -638,6 +982,38 @@ async function selectOption(label: string, option: string) {
   await userEvent.selectOptions(screen.getByLabelText(label), option);
 }
 
+async function selectAppointmentDateFromPicker() {
+  const date = new Date();
+  const day = String(date.getDate());
+  const month = date.toLocaleString("es-AR", { month: "long" });
+  const year = String(date.getFullYear());
+
+  fireEvent.click(screen.getByRole("button", { name: "Seleccionar fecha" }));
+  await screen.findByRole("grid");
+  await userEvent.click(
+    screen.getByRole("button", {
+      name: new RegExp(`${day}.*${month}.*${year}`, "i"),
+    }),
+  );
+
+  const selectedDate = [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+
+  expect(screen.getByRole("button", { name: /Fecha:/ })).toHaveTextContent(
+    new Intl.DateTimeFormat("es-AR", {
+      weekday: "short",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    }).format(date),
+  );
+
+  return selectedDate;
+}
+
 async function addService(serviceName: string) {
   await userEvent.click(
     screen.getByRole("button", { name: "+ Agregar servicio" }),
@@ -652,6 +1028,7 @@ type QueueFetchOptions = {
   staff?: StaffDto[];
   queue?: LiveQueuesDto;
   createdTicket?: QueueTicketDto;
+  appointmentError?: string;
 };
 
 function stubQueueFetch({
@@ -660,6 +1037,7 @@ function stubQueueFetch({
   staff = [makeStaff()],
   queue = { queues: [] },
   createdTicket = makeQueueTicket(),
+  appointmentError,
 }: QueueFetchOptions = {}) {
   const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -671,6 +1049,25 @@ function stubQueueFetch({
 
     if (url === "/api/queue" && method === "POST") {
       return ok(createdTicket);
+    }
+
+    if (url === "/api/appointments" && method === "POST") {
+      if (appointmentError) {
+        return Promise.resolve(
+          Response.json(
+            {
+              ok: false,
+              error: { code: "CONFLICT", message: appointmentError },
+            },
+            { status: 409 },
+          ),
+        );
+      }
+      return ok({ ...createdTicket, source: "PHONE" });
+    }
+
+    if (url.startsWith("/api/queue/") && method === "POST") {
+      return ok({ ...createdTicket, status: "CANCELLED", queueStatus: "LEFT" });
     }
 
     if (url.startsWith("/api/queue/") && method === "PATCH") {
@@ -702,10 +1099,23 @@ function findQueuePost(fetchMock: ReturnType<typeof stubQueueFetch>) {
   )?.[1];
 }
 
+function findAppointmentPost(fetchMock: ReturnType<typeof stubQueueFetch>) {
+  return fetchMock.mock.calls.find(
+    ([url, init]) => url === "/api/appointments" && init?.method === "POST",
+  )?.[1];
+}
+
 function findQueuePatch(fetchMock: ReturnType<typeof stubQueueFetch>) {
   return fetchMock.mock.calls.find(
     ([url, init]) =>
       String(url).startsWith("/api/queue/") && init?.method === "PATCH",
+  )?.[1];
+}
+
+function findQueueCancelPost(fetchMock: ReturnType<typeof stubQueueFetch>) {
+  return fetchMock.mock.calls.find(
+    ([url, init]) =>
+      String(url).startsWith("/api/queue/") && init?.method === "POST",
   )?.[1];
 }
 
@@ -778,6 +1188,9 @@ function makeQueueTicket(
     clientName: "Ana Paz",
     staffMemberId: "staff_1",
     status: "CHECKED_IN",
+    source: "WALK_IN",
+    startAt: "2026-01-01T12:00:00.000Z",
+    endAt: "2026-01-01T12:45:00.000Z",
     queueStatus: "WAITING",
     queuedAt: "2026-01-01T12:00:00.000Z",
     queuePosition: 1,

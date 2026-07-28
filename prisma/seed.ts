@@ -5,6 +5,10 @@ import {
   BarberShopMemberRole,
   UserStatus,
 } from "../src/generated/prisma/enums";
+import {
+  BUSINESS_CURRENCY,
+  BUSINESS_TIME_ZONE,
+} from "../src/shared/lib/businessLocale";
 
 const MIN_PASSWORD_LENGTH = 12;
 
@@ -25,11 +29,8 @@ function requireEnv(name: string) {
 
 const shopName = readEnv("SEED_SHOP_NAME", "Niche 72")!;
 const shopSlug = readEnv("SEED_SHOP_SLUG", "niche-72")!.toLowerCase();
-const shopTimezone = readEnv(
-  "SEED_SHOP_TIMEZONE",
-  "America/Argentina/Buenos_Aires",
-)!;
-const shopCurrency = readEnv("SEED_SHOP_CURRENCY", "ARS")!;
+const shopTimezone = readEnv("SEED_SHOP_TIMEZONE", BUSINESS_TIME_ZONE)!;
+const shopCurrency = readEnv("SEED_SHOP_CURRENCY", BUSINESS_CURRENCY)!;
 const appointmentChangeLimitSeconds = Number.parseInt(
   readEnv("SEED_APPOINTMENT_CHANGE_LIMIT_SECONDS", "86400")!,
   10,

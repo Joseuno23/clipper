@@ -5,14 +5,18 @@ import {
   Armchair,
   ArrowDown,
   ArrowUp,
+  Calendar as CalendarIcon,
+  CalendarClock,
   ChevronsDown,
   Plus,
   User,
   Users,
   X,
 } from "lucide-react";
+import { es } from "date-fns/locale";
 
 import { Button } from "@/components/ui/button";
+import { Calendar } from "@/components/ui/calendar";
 import {
   Dialog,
   DialogContent,
@@ -32,6 +36,7 @@ import {
 } from "@/components/ui/select";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { StatusBadge } from "@/shared/components/StatusBadge";
+import { CancelReasonDialog } from "@/shared/components/CancelReasonDialog";
 import {
   AdminCrudApiError,
   adminCrudKeys,
@@ -43,18 +48,49 @@ import {
   type StaffDto,
 } from "@/shared/api/adminCrud";
 import {
+  appointmentKeys,
+  appointmentsApi,
+  type AppointmentCreateInput,
+} from "@/shared/api/appointments";
+import {
   queueApi,
   queueKeys,
   type QueueStatus,
   type QueueTicketDto,
   type StaffQueueDto,
 } from "@/shared/api/queue";
+import { salesKeys } from "@/shared/api/sales";
+import {
+  BUSINESS_LOCALE,
+  BUSINESS_TIME_ZONE,
+  businessDateTimeToIso,
+} from "@/shared/lib/businessLocale";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 100;
 const CLIENT_SUGGESTION_LIMIT = 10;
 const SERVICE_SUGGESTION_LIMIT = 8;
 const MIN_SERVICE_SEARCH_LENGTH = 2;
+const PUBLIC_WAITING_SLOT_COUNT = 5;
+const APPOINTMENT_TIME_OPTIONS = buildTimeOptions();
+const TIME_FORMATTER = new Intl.DateTimeFormat(BUSINESS_LOCALE, {
+  timeZone: BUSINESS_TIME_ZONE,
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+const APPOINTMENT_DATE_FORMATTER = new Intl.DateTimeFormat(BUSINESS_LOCALE, {
+  timeZone: BUSINESS_TIME_ZONE,
+  weekday: "short",
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+});
+
+type QueueTicketEstimate = {
+  startsAt: Date;
+  finishesAt: Date;
+};
 
 function initials(name: string) {
   return name
@@ -65,78 +101,187 @@ function initials(name: string) {
     .toUpperCase();
 }
 
-function ChairSlot({
-  ticket,
-  onEditTicket,
-}: {
-  ticket?: QueueTicketDto;
-  onEditTicket: (ticket: QueueTicketDto) => void;
-}) {
-  const occupied = ticket !== undefined;
-  const content = (
-    <>
-      <Armchair className="h-9 w-9" strokeWidth={1.6} />
-      <span className="mt-1 text-[10px] font-semibold uppercase tracking-[0.12em]">
-        {occupied ? "Atendiendo" : "Libre"}
-      </span>
-      {occupied && (
-        <span className="max-w-[78px] truncate text-[11px] font-semibold text-foreground">
-          {ticket.clientName}
-        </span>
-      )}
-      <span
-        className={cn(
-          "absolute -top-1.5 -right-1.5 h-3 w-3 rounded-full ring-2 ring-card",
-          occupied ? "bg-destructive" : "bg-success",
-        )}
-      />
-    </>
+function buildQueueEstimates(queue: StaffQueueDto, now: Date) {
+  const estimates = new Map<string, QueueTicketEstimate>();
+  let cursor = now.getTime();
+  const chairTicket = queue.tickets.find(
+    (ticket) => ticket.queueStatus === "IN_SERVICE",
   );
 
-  const className = cn(
-    "group relative flex h-[88px] w-[88px] flex-col items-center justify-center rounded-2xl border transition-all",
-    occupied
-      ? "border-destructive/30 bg-destructive/10 text-destructive shadow-[inset_0_0_0_1px_oklch(from_var(--destructive)_l_c_h_/_0.15)]"
-      : "border-success/30 bg-success/10 text-success",
-  );
+  if (chairTicket) {
+    const finishesAt = addMinutes(now, ticketDurationMinutes(chairTicket));
+    estimates.set(chairTicket.id, { startsAt: now, finishesAt });
+    cursor = finishesAt.getTime();
+  }
 
-  return occupied ? (
-    <button
-      type="button"
-      className={className}
-      title={`Editar turno · ${ticket.clientName}`}
-      onClick={() => onEditTicket(ticket)}
-    >
-      {content}
-    </button>
-  ) : (
-    <div className={cn(className)} title="Silla libre">
-      {content}
-    </div>
-  );
+  queue.tickets
+    .filter((ticket) => ticket.queueStatus !== "IN_SERVICE")
+    .forEach((ticket) => {
+      const startsAt = new Date(cursor);
+      const finishesAt = addMinutes(startsAt, ticketDurationMinutes(ticket));
+      estimates.set(ticket.id, { startsAt, finishesAt });
+      cursor = finishesAt.getTime();
+    });
+
+  return estimates;
 }
 
-function PublicChairSlot({ ticket }: { ticket?: QueueTicketDto }) {
+function ticketDurationMinutes(ticket: QueueTicketDto) {
+  if (ticket.services.length > 0) {
+    const servicesDuration = ticket.services.reduce(
+      (total, service) => total + validDuration(service.durationMinutes),
+      0,
+    );
+
+    if (servicesDuration > 0) return servicesDuration;
+  }
+
+  return validDuration(ticket.serviceDurationMinutes);
+}
+
+function validDuration(durationMinutes: number | null | undefined) {
+  return typeof durationMinutes === "number" && durationMinutes > 0
+    ? durationMinutes
+    : 0;
+}
+
+function addMinutes(date: Date, minutes: number) {
+  return new Date(date.getTime() + minutes * 60_000);
+}
+
+function buildTimeOptions() {
+  const options: Array<{ value: string; label: string }> = [];
+
+  for (let hour = 8; hour <= 21; hour += 1) {
+    for (let minute = 0; minute < 60; minute += 15) {
+      const value = `${String(hour).padStart(2, "0")}:${String(minute).padStart(
+        2,
+        "0",
+      )}`;
+      options.push({ value, label: value });
+    }
+  }
+
+  return options;
+}
+
+function combineLocalDateAndTime(date: string, time: string) {
+  return businessDateTimeToIso(date, time);
+}
+
+function dateInputValueToLocalDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+
+  if (!year || !month || !day) return undefined;
+
+  const date = new Date(year, month - 1, day);
+
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function localDateToDateInputValue(date: Date) {
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, "0"),
+    String(date.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function formatAppointmentDate(value: string) {
+  const date = dateInputValueToLocalDate(value);
+
+  if (!date) return "Seleccionar fecha";
+
+  return APPOINTMENT_DATE_FORMATTER.format(date);
+}
+
+function formatChairEstimate(estimate: QueueTicketEstimate) {
+  return `Finaliza aprox. ${formatTime(estimate.finishesAt)}`;
+}
+
+function formatWaitingEstimate(estimate: QueueTicketEstimate) {
+  return `Turno aprox. ${formatTime(estimate.startsAt)} · finaliza ${formatTime(
+    estimate.finishesAt,
+  )}`;
+}
+
+function formatPublicChairEstimate(estimate: QueueTicketEstimate) {
+  return `Hasta ${formatTime(estimate.finishesAt)}`;
+}
+
+function formatPublicWaitingEstimate(estimate: QueueTicketEstimate) {
+  return `${formatTime(estimate.startsAt)}–${formatTime(estimate.finishesAt)}`;
+}
+
+function formatTime(date: Date) {
+  return TIME_FORMATTER.format(date);
+}
+
+function isScheduledAppointment(ticket: QueueTicketDto) {
+  return ticket.source !== "WALK_IN";
+}
+
+function PublicQueueSlot({
+  type,
+  ticket,
+  estimate,
+  slotNumber,
+}: {
+  type: "chair" | "waiting";
+  ticket?: QueueTicketDto;
+  estimate?: QueueTicketEstimate;
+  slotNumber?: number;
+}) {
   const occupied = ticket !== undefined;
+  const isChair = type === "chair";
+  const label = isChair
+    ? occupied
+      ? "Atendiendo"
+      : "Silla libre"
+    : occupied
+      ? `Espera ${ticket.queuePosition ?? slotNumber ?? "—"}`
+      : `Espera ${slotNumber ?? "—"} libre`;
+  const title = occupied
+    ? `${isChair ? "Atendiendo" : "Esperando"} · ${ticket.clientName}`
+    : label;
 
   return (
     <div
       className={cn(
-        "relative flex h-28 w-28 flex-col items-center justify-center rounded-3xl border text-center",
+        "relative flex h-28 w-28 shrink-0 flex-col items-center justify-center rounded-3xl border px-3 text-center",
         occupied
           ? "border-destructive/30 bg-destructive/10 text-destructive"
           : "border-success/30 bg-success/10 text-success",
       )}
-      title={occupied ? `Atendiendo · ${ticket.clientName}` : "Silla libre"}
+      title={title}
+      aria-label={title}
     >
-      <Armchair className="h-10 w-10" strokeWidth={1.6} />
-      <span className="mt-2 text-[11px] font-semibold uppercase tracking-[0.14em]">
-        {occupied ? "Atendiendo" : "Libre"}
+      {isChair ? (
+        <Armchair className="h-9 w-9" strokeWidth={1.6} />
+      ) : (
+        <User className="h-9 w-9" strokeWidth={1.6} />
+      )}
+      <span className="mt-2 max-w-full truncate text-[10px] font-semibold uppercase tracking-[0.12em]">
+        {label}
       </span>
       {occupied && (
-        <span className="mt-1 max-w-[96px] truncate text-sm font-semibold text-foreground">
-          {ticket.clientName}
-        </span>
+        <>
+          {isScheduledAppointment(ticket) && (
+            <span className="mt-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+              Cita {formatTime(new Date(ticket.startAt))}
+            </span>
+          )}
+          <span className="mt-1 max-w-[96px] truncate text-sm font-semibold text-foreground">
+            {ticket.clientName}
+          </span>
+          {estimate && (
+            <span className="mt-1 max-w-[96px] truncate text-xs font-medium tabular-nums leading-tight text-muted-foreground">
+              {isChair
+                ? formatPublicChairEstimate(estimate)
+                : formatPublicWaitingEstimate(estimate)}
+            </span>
+          )}
+        </>
       )}
       <span
         className={cn(
@@ -148,46 +293,215 @@ function PublicChairSlot({ ticket }: { ticket?: QueueTicketDto }) {
   );
 }
 
-function WaitTicket({
+function AdminQueueSlot({
+  type,
   ticket,
+  estimate,
+  slotNumber,
   onEditTicket,
 }: {
-  ticket: QueueTicketDto;
+  type: "chair" | "waiting";
+  ticket?: QueueTicketDto;
+  estimate?: QueueTicketEstimate;
+  slotNumber?: number;
   onEditTicket: (ticket: QueueTicketDto) => void;
 }) {
-  return (
-    <div className="flex min-w-[92px] flex-col items-center gap-1.5">
-      <button
-        type="button"
-        className="relative flex h-12 w-12 items-center justify-center rounded-xl border border-destructive/30 bg-destructive/10 text-destructive transition-all"
-        title={`${ticket.clientName} · ${ticket.serviceName ?? "Sin servicio"}`}
-        aria-label={`Editar turno de ${ticket.clientName}`}
-        onClick={() => onEditTicket(ticket)}
-      >
-        <User className="h-5 w-5" strokeWidth={1.8} />
-      </button>
-      <span className="text-[10px] font-medium tabular-nums text-muted-foreground/70">
-        #{ticket.queuePosition ?? "—"}
+  const occupied = ticket !== undefined;
+  const isChair = type === "chair";
+  const label = isChair
+    ? occupied
+      ? "Atendiendo"
+      : "Silla libre"
+    : occupied
+      ? `Espera ${ticket.queuePosition ?? slotNumber ?? "—"}`
+      : `Espera ${slotNumber ?? "—"} libre`;
+  const title = occupied ? `Editar turno · ${ticket.clientName}` : label;
+  const content = (
+    <>
+      {isChair ? (
+        <Armchair className="h-9 w-9" strokeWidth={1.6} />
+      ) : (
+        <User className="h-9 w-9" strokeWidth={1.6} />
+      )}
+      <span className="mt-2 max-w-full truncate text-[10px] font-semibold uppercase tracking-[0.12em]">
+        {label}
       </span>
-      <span className="max-w-[92px] truncate text-[11px] font-medium text-foreground">
-        {ticket.clientName}
-      </span>
+      {occupied && (
+        <>
+          {isScheduledAppointment(ticket) && (
+            <span className="mt-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+              Cita {formatTime(new Date(ticket.startAt))}
+            </span>
+          )}
+          <span className="mt-1 max-w-[96px] truncate text-sm font-semibold text-foreground">
+            {ticket.clientName}
+          </span>
+          {estimate && (
+            <span className="mt-1 max-w-[96px] truncate text-xs font-medium tabular-nums leading-tight text-muted-foreground">
+              {isChair
+                ? formatPublicChairEstimate(estimate)
+                : formatPublicWaitingEstimate(estimate)}
+            </span>
+          )}
+        </>
+      )}
+      <span
+        className={cn(
+          "absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full ring-2 ring-card",
+          occupied ? "bg-destructive" : "bg-success",
+        )}
+      />
+    </>
+  );
+  const className = cn(
+    "relative flex h-28 w-28 shrink-0 flex-col items-center justify-center rounded-3xl border px-3 text-center transition-all",
+    occupied
+      ? "border-destructive/30 bg-destructive/10 text-destructive hover:border-destructive/50"
+      : "border-success/30 bg-success/10 text-success",
+  );
+
+  return occupied ? (
+    <button
+      type="button"
+      className={className}
+      title={title}
+      aria-label={`Editar turno de ${ticket.clientName}`}
+      onClick={() => onEditTicket(ticket)}
+    >
+      {content}
+    </button>
+  ) : (
+    <div className={className} title={title} aria-label={label}>
+      {content}
     </div>
   );
 }
 
-function PublicWaitTicket({ ticket }: { ticket: QueueTicketDto }) {
+function AdminTicketControls({
+  ticket,
+  staffOptions,
+  isUpdating,
+  onMoveTicket,
+  onReorderTicket,
+  onUpdateStatus,
+  onCancelTicket,
+}: {
+  ticket: QueueTicketDto;
+  staffOptions: StaffOption[];
+  isUpdating: boolean;
+  onMoveTicket: (ticket: QueueTicketDto, staffMemberId: string) => void;
+  onReorderTicket: (
+    ticket: QueueTicketDto,
+    positionAction: "UP" | "DOWN" | "FIRST_WAITING" | "LAST" | "CHAIR",
+  ) => void;
+  onUpdateStatus: (ticket: QueueTicketDto, queueStatus: QueueStatus) => void;
+  onCancelTicket: (ticket: QueueTicketDto) => void;
+}) {
   return (
-    <div className="flex min-w-[112px] flex-col items-center gap-2 rounded-2xl border border-border bg-surface px-4 py-3 text-center">
-      <span className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        Posición {ticket.queuePosition ?? "—"}
-      </span>
-      <div className="flex h-12 w-12 items-center justify-center rounded-xl border border-primary/20 bg-primary/10 text-primary">
-        <User className="h-5 w-5" strokeWidth={1.8} />
-      </div>
-      <span className="max-w-[104px] truncate text-sm font-semibold text-foreground">
-        {ticket.clientName}
-      </span>
+    <div
+      className="flex w-36 shrink-0 flex-col gap-2"
+      aria-label={`Controles de ${ticket.clientName}`}
+    >
+      {ticket.queueStatus === "WAITING" && (
+        <>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 w-full px-2 text-xs"
+            disabled={isUpdating}
+            onClick={() => onReorderTicket(ticket, "CHAIR")}
+          >
+            Pasar a silla
+          </Button>
+          <div className="grid grid-cols-3 gap-1">
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 px-0"
+              aria-label={`Subir turno de ${ticket.clientName}`}
+              title="Subir"
+              disabled={isUpdating}
+              onClick={() => onReorderTicket(ticket, "UP")}
+            >
+              <ArrowUp className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 px-0"
+              aria-label={`Bajar turno de ${ticket.clientName}`}
+              title="Bajar"
+              disabled={isUpdating}
+              onClick={() => onReorderTicket(ticket, "DOWN")}
+            >
+              <ArrowDown className="h-3.5 w-3.5" />
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8 px-0"
+              aria-label={`Enviar turno de ${ticket.clientName} al final`}
+              title="Enviar al final"
+              disabled={isUpdating}
+              onClick={() => onReorderTicket(ticket, "LAST")}
+            >
+              <ChevronsDown className="h-3.5 w-3.5" />
+            </Button>
+          </div>
+        </>
+      )}
+      {ticket.queueStatus === "IN_SERVICE" && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="h-8 w-full px-2 text-xs"
+          disabled={isUpdating}
+          onClick={() => onUpdateStatus(ticket, "SERVED")}
+        >
+          Servido
+        </Button>
+      )}
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 w-full px-2 text-xs"
+        disabled={isUpdating}
+        onClick={() => onUpdateStatus(ticket, "LEFT")}
+      >
+        Se fue
+      </Button>
+      <Button
+        type="button"
+        size="sm"
+        variant="outline"
+        className="h-8 w-full px-2 text-xs text-destructive hover:text-destructive"
+        disabled={isUpdating}
+        onClick={() => onCancelTicket(ticket)}
+      >
+        Cancelar turno
+      </Button>
+      <Select
+        value={ticket.staffMemberId ?? undefined}
+        onValueChange={(staffMemberId) => onMoveTicket(ticket, staffMemberId)}
+        disabled={isUpdating}
+      >
+        <SelectTrigger className="h-8 w-full">
+          <SelectValue placeholder="Mover a" />
+        </SelectTrigger>
+        <SelectContent>
+          {staffOptions.map((staff) => (
+            <SelectItem key={staff.id} value={staff.id}>
+              {staff.name}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
     </div>
   );
 }
@@ -199,6 +513,11 @@ function PublicQueueRow({ queue }: { queue: StaffQueueDto }) {
   const waitingTickets = queue.tickets.filter(
     (ticket) => ticket.queueStatus !== "IN_SERVICE",
   );
+  const publicWaitingSlots = Array.from(
+    { length: PUBLIC_WAITING_SLOT_COUNT },
+    (_, index) => waitingTickets[index],
+  );
+  const estimates = buildQueueEstimates(queue, new Date());
 
   return (
     <section className="rounded-3xl border border-border bg-card p-6 shadow-sm">
@@ -222,18 +541,22 @@ function PublicQueueRow({ queue }: { queue: StaffQueueDto }) {
       </div>
 
       <div className="flex items-center gap-5 overflow-x-auto pb-1">
-        <PublicChairSlot ticket={chairTicket} />
+        <PublicQueueSlot
+          type="chair"
+          ticket={chairTicket}
+          estimate={chairTicket ? estimates.get(chairTicket.id) : undefined}
+        />
         <div className="h-px w-8 shrink-0 bg-border" aria-hidden />
         <div className="flex items-stretch gap-3">
-          {waitingTickets.length > 0 ? (
-            waitingTickets.map((ticket) => (
-              <PublicWaitTicket key={ticket.id} ticket={ticket} />
-            ))
-          ) : (
-            <p className="min-w-40 rounded-2xl border border-dashed border-border bg-surface px-5 py-8 text-center text-sm text-muted-foreground">
-              Sin turnos esperando
-            </p>
-          )}
+          {publicWaitingSlots.map((ticket, index) => (
+            <PublicQueueSlot
+              key={ticket?.id ?? `empty-${queue.staffId}-${index}`}
+              type="waiting"
+              ticket={ticket}
+              estimate={ticket ? estimates.get(ticket.id) : undefined}
+              slotNumber={index + 1}
+            />
+          ))}
         </div>
       </div>
     </section>
@@ -246,6 +569,7 @@ function QueueRow({
   onMoveTicket,
   onReorderTicket,
   onUpdateStatus,
+  onCancelTicket,
   onEditTicket,
   isUpdating,
 }: {
@@ -257,6 +581,7 @@ function QueueRow({
     positionAction: "UP" | "DOWN" | "FIRST_WAITING" | "LAST" | "CHAIR",
   ) => void;
   onUpdateStatus: (ticket: QueueTicketDto, queueStatus: QueueStatus) => void;
+  onCancelTicket: (ticket: QueueTicketDto) => void;
   onEditTicket: (ticket: QueueTicketDto) => void;
   isUpdating: boolean;
 }) {
@@ -266,49 +591,34 @@ function QueueRow({
   const waitingTickets = queue.tickets.filter(
     (ticket) => ticket.queueStatus !== "IN_SERVICE",
   );
+  const estimates = buildQueueEstimates(queue, new Date());
+  const adminWaitingSlots = Array.from(
+    { length: Math.max(PUBLIC_WAITING_SLOT_COUNT, waitingTickets.length) },
+    (_, index) => waitingTickets[index],
+  );
 
   return (
     <div className="rounded-2xl border border-border bg-card p-5 transition-colors hover:border-border/80">
-      <div className="flex flex-col gap-5 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex items-center gap-4">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground ring-2 ring-border">
-            {initials(queue.staffName)}
-          </div>
-          <div className="min-w-0">
-            <p className="font-display text-base font-semibold text-foreground">
-              {queue.staffName}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {queue.roles.join(" · ") || "Staff"} ·{" "}
-              {queue.specialties.join(" · ") || "Sin especialidades"}
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {queue.inServiceCount} en silla · {queue.waitingCount} esperando
-            </p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-4 overflow-x-auto">
-          <ChairSlot ticket={chairTicket} onEditTicket={onEditTicket} />
-          <div className="h-px w-6 bg-border" aria-hidden />
-          <div className="flex items-start gap-2.5">
-            {waitingTickets.length > 0 ? (
-              waitingTickets.map((ticket) => (
-                <WaitTicket
-                  key={ticket.id}
-                  ticket={ticket}
-                  onEditTicket={onEditTicket}
-                />
-              ))
-            ) : (
-              <p className="min-w-32 rounded-xl border border-dashed border-border bg-surface px-4 py-3 text-center text-xs text-muted-foreground">
-                Sin turnos esperando
+      <div className="space-y-5">
+        <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+          <div className="flex items-center gap-4">
+            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground ring-2 ring-border">
+              {initials(queue.staffName)}
+            </div>
+            <div className="min-w-0">
+              <p className="font-display text-base font-semibold text-foreground">
+                {queue.staffName}
               </p>
-            )}
+              <p className="text-xs text-muted-foreground">
+                {queue.roles.join(" · ") || "Staff"} ·{" "}
+                {queue.specialties.join(" · ") || "Sin especialidades"}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {queue.inServiceCount} en silla · {queue.waitingCount} esperando
+              </p>
+            </div>
           </div>
-        </div>
 
-        <div className="flex flex-col gap-2 xl:min-w-64">
           <div className="flex items-center gap-3 xl:justify-end">
             <div className="rounded-lg border border-border bg-surface px-3 py-2 text-right">
               <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
@@ -322,93 +632,64 @@ function QueueRow({
               {chairTicket ? "Atendiendo" : "Disponible"}
             </StatusBadge>
           </div>
+        </div>
 
-          {queue.tickets.map((ticket) => (
-            <div key={ticket.id} className="flex items-center gap-2 text-xs">
-              <button
-                type="button"
-                className="min-w-0 flex-1 truncate text-left hover:text-primary"
-                onClick={() => onEditTicket(ticket)}
+        <div className="flex items-start gap-5 overflow-x-auto pb-2">
+          <div className="flex w-36 shrink-0 flex-col items-center gap-3">
+            <AdminQueueSlot
+              type="chair"
+              ticket={chairTicket}
+              estimate={chairTicket ? estimates.get(chairTicket.id) : undefined}
+              onEditTicket={onEditTicket}
+            />
+            {chairTicket ? (
+              <AdminTicketControls
+                ticket={chairTicket}
+                staffOptions={staffOptions}
+                isUpdating={isUpdating}
+                onMoveTicket={onMoveTicket}
+                onReorderTicket={onReorderTicket}
+                onUpdateStatus={onUpdateStatus}
+                onCancelTicket={onCancelTicket}
+              />
+            ) : (
+              <div className="h-8 text-center text-xs text-muted-foreground">
+                Sin turno en silla
+              </div>
+            )}
+          </div>
+          <div className="mt-14 h-px w-8 shrink-0 bg-border" aria-hidden />
+          <div className="flex items-start gap-3">
+            {adminWaitingSlots.map((ticket, index) => (
+              <div
+                key={ticket?.id ?? `empty-admin-${queue.staffId}-${index}`}
+                className="flex w-36 shrink-0 flex-col items-center gap-3"
               >
-                {ticket.clientName} · {ticket.serviceName ?? "Sin servicio"}
-              </button>
-              {ticket.queueStatus === "WAITING" && (
-                <>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    disabled={isUpdating}
-                    onClick={() => onReorderTicket(ticket, "CHAIR")}
-                  >
-                    Pasar a silla
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    aria-label={`Subir turno de ${ticket.clientName}`}
-                    title="Subir"
-                    disabled={isUpdating}
-                    onClick={() => onReorderTicket(ticket, "UP")}
-                  >
-                    <ArrowUp className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    aria-label={`Bajar turno de ${ticket.clientName}`}
-                    title="Bajar"
-                    disabled={isUpdating}
-                    onClick={() => onReorderTicket(ticket, "DOWN")}
-                  >
-                    <ArrowDown className="h-3.5 w-3.5" />
-                  </Button>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    aria-label={`Enviar turno de ${ticket.clientName} al final`}
-                    title="Enviar al final"
-                    disabled={isUpdating}
-                    onClick={() => onReorderTicket(ticket, "LAST")}
-                  >
-                    <ChevronsDown className="h-3.5 w-3.5" />
-                  </Button>
-                </>
-              )}
-              {ticket.queueStatus === "IN_SERVICE" && (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={isUpdating}
-                  onClick={() => onUpdateStatus(ticket, "SERVED")}
-                >
-                  Servido
-                </Button>
-              )}
-              <Select
-                value={ticket.staffMemberId ?? undefined}
-                onValueChange={(staffMemberId) =>
-                  onMoveTicket(ticket, staffMemberId)
-                }
-                disabled={isUpdating}
-              >
-                <SelectTrigger className="h-8 w-36">
-                  <SelectValue placeholder="Mover a" />
-                </SelectTrigger>
-                <SelectContent>
-                  {staffOptions.map((staff) => (
-                    <SelectItem key={staff.id} value={staff.id}>
-                      {staff.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ))}
+                <AdminQueueSlot
+                  type="waiting"
+                  ticket={ticket}
+                  estimate={ticket ? estimates.get(ticket.id) : undefined}
+                  slotNumber={index + 1}
+                  onEditTicket={onEditTicket}
+                />
+                {ticket ? (
+                  <AdminTicketControls
+                    ticket={ticket}
+                    staffOptions={staffOptions}
+                    isUpdating={isUpdating}
+                    onMoveTicket={onMoveTicket}
+                    onReorderTicket={onReorderTicket}
+                    onUpdateStatus={onUpdateStatus}
+                    onCancelTicket={onCancelTicket}
+                  />
+                ) : (
+                  <div className="h-8 text-center text-xs text-muted-foreground">
+                    Libre
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -418,11 +699,16 @@ function QueueRow({
 export function QueueView() {
   const queryClient = useQueryClient();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isAppointmentDialogOpen, setIsAppointmentDialogOpen] = useState(false);
   const [editingTicket, setEditingTicket] = useState<QueueTicketDto | null>(
     null,
   );
   const [formError, setFormError] = useState<string | null>(null);
+  const [appointmentError, setAppointmentError] = useState<string | null>(null);
   const [editError, setEditError] = useState<string | null>(null);
+  const [ticketToCancel, setTicketToCancel] = useState<QueueTicketDto | null>(
+    null,
+  );
 
   const queuesQuery = useQuery({
     queryKey: queueKeys.live,
@@ -435,6 +721,10 @@ export function QueueView() {
 
   const refreshQueue = () =>
     queryClient.invalidateQueries({ queryKey: queueKeys.live });
+  const refreshSales = () =>
+    queryClient.invalidateQueries({ queryKey: salesKeys.all });
+  const refreshAppointments = () =>
+    queryClient.invalidateQueries({ queryKey: appointmentKeys.all });
 
   const createMutation = useMutation({
     mutationFn: queueApi.createWalkIn,
@@ -444,6 +734,20 @@ export function QueueView() {
       await refreshQueue();
     },
     onError: (error) => setFormError(errorMessage(error)),
+  });
+
+  const createAppointmentMutation = useMutation({
+    mutationFn: appointmentsApi.createScheduled,
+    onSuccess: async () => {
+      setIsAppointmentDialogOpen(false);
+      setAppointmentError(null);
+      await Promise.all([
+        refreshQueue(),
+        refreshSales(),
+        refreshAppointments(),
+      ]);
+    },
+    onError: (error) => setAppointmentError(errorMessage(error)),
   });
 
   const updateMutation = useMutation({
@@ -457,6 +761,15 @@ export function QueueView() {
       positionAction?: "UP" | "DOWN" | "FIRST_WAITING" | "LAST" | "CHAIR";
     }) => queueApi.updateTicket(id, input),
     onSuccess: async () => refreshQueue(),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      queueApi.cancelTicket(id, { reason }),
+    onSuccess: async () => {
+      setTicketToCancel(null);
+      await Promise.all([refreshQueue(), refreshSales()]);
+    },
   });
 
   const editMutation = useMutation({
@@ -490,6 +803,10 @@ export function QueueView() {
   const totalActive = queues.reduce((acc, q) => acc + q.totalActiveCount, 0);
   const chairsFree = queues.filter((q) => q.inServiceCount === 0).length;
 
+  const confirmAndCancelTicket = (ticket: QueueTicketDto) => {
+    setTicketToCancel(ticket);
+  };
+
   return (
     <>
       <PageHeader
@@ -500,6 +817,18 @@ export function QueueView() {
           <div className="flex gap-2">
             <Button asChild size="sm" variant="outline">
               <a href="/queue/display">Vista TV</a>
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => {
+                setAppointmentError(null);
+                setIsAppointmentDialogOpen(true);
+              }}
+            >
+              <CalendarClock className="h-4 w-4" />
+              Nueva cita
             </Button>
             <Button
               size="sm"
@@ -538,7 +867,7 @@ export function QueueView() {
               key={queue.staffId}
               queue={queue}
               staffOptions={staffOptions}
-              isUpdating={updateMutation.isPending}
+              isUpdating={updateMutation.isPending || cancelMutation.isPending}
               onMoveTicket={(ticket, staffMemberId) => {
                 if (staffMemberId === ticket.staffMemberId) return;
                 updateMutation.mutate({ id: ticket.id, staffMemberId });
@@ -546,6 +875,7 @@ export function QueueView() {
               onUpdateStatus={(ticket, queueStatus) =>
                 updateMutation.mutate({ id: ticket.id, queueStatus })
               }
+              onCancelTicket={confirmAndCancelTicket}
               onReorderTicket={(ticket, positionAction) =>
                 updateMutation.mutate({ id: ticket.id, positionAction })
               }
@@ -572,6 +902,15 @@ export function QueueView() {
         onOpenChange={setIsDialogOpen}
         onSubmit={(input) => createMutation.mutate(input)}
       />
+      <NewAppointmentDialog
+        open={isAppointmentDialogOpen}
+        staff={staffQuery.data ?? []}
+        error={appointmentError}
+        isSubmitting={createAppointmentMutation.isPending}
+        isLoading={staffQuery.isLoading}
+        onOpenChange={setIsAppointmentDialogOpen}
+        onSubmit={(input) => createAppointmentMutation.mutate(input)}
+      />
       <EditQueueTicketDialog
         ticket={editingTicket}
         staff={staffQuery.data ?? []}
@@ -585,6 +924,23 @@ export function QueueView() {
           editingTicket &&
           editMutation.mutate({ id: editingTicket.id, ...input })
         }
+      />
+      <CancelReasonDialog
+        open={ticketToCancel !== null}
+        title="Cancelar turno"
+        description="Confirmá la cancelación con un motivo obligatorio."
+        context={[
+          { label: "Cliente", value: ticketToCancel?.clientName },
+          { label: "Ticket", value: ticketToCancel?.id },
+        ]}
+        isSubmitting={cancelMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open) setTicketToCancel(null);
+        }}
+        onConfirm={(reason) => {
+          if (!ticketToCancel) return;
+          cancelMutation.mutate({ id: ticketToCancel.id, reason });
+        }}
       />
     </>
   );
@@ -1091,6 +1447,273 @@ function NewWalkInDialog({
   );
 }
 
+function NewAppointmentDialog({
+  open,
+  staff,
+  error,
+  isSubmitting,
+  isLoading,
+  onOpenChange,
+  onSubmit,
+}: {
+  open: boolean;
+  staff: StaffDto[];
+  error: string | null;
+  isSubmitting: boolean;
+  isLoading: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (input: AppointmentCreateInput) => void;
+}) {
+  const [clientSearch, setClientSearch] = useState("");
+  const [selectedCustomer, setSelectedCustomer] = useState<CustomerDto | null>(
+    null,
+  );
+  const [newFirstName, setNewFirstName] = useState("");
+  const [newLastName, setNewLastName] = useState("");
+  const [newPhone, setNewPhone] = useState("");
+  const [selectedServices, setSelectedServices] = useState<ServiceDto[]>([]);
+  const [staffMemberId, setStaffMemberId] = useState("");
+  const [appointmentDate, setAppointmentDate] = useState("");
+  const [appointmentTime, setAppointmentTime] = useState("");
+  const [localError, setLocalError] = useState<string | null>(null);
+  const selectedServiceIds = useMemo(
+    () => selectedServices.map((service) => service.id),
+    [selectedServices],
+  );
+  const canSearchClients = shouldSearchClients(clientSearch);
+  const clientSuggestionsQuery = useQuery({
+    queryKey: adminCrudKeys.customersList({
+      limit: CLIENT_SUGGESTION_LIMIT,
+      offset: 0,
+      query: clientSearch,
+    }),
+    queryFn: () =>
+      customersApi.list({
+        limit: CLIENT_SUGGESTION_LIMIT,
+        offset: 0,
+        query: clientSearch,
+      }),
+    enabled: open && canSearchClients,
+  });
+  const rawClientSuggestions = clientSuggestionsQuery.data;
+  const clientSuggestions = useMemo(
+    () => prioritizeExactDocument(rawClientSuggestions ?? [], clientSearch),
+    [rawClientSuggestions, clientSearch],
+  );
+  const searchDigits = onlyDigits(clientSearch);
+  const exactDocumentMatch = (rawClientSuggestions ?? []).some(
+    (customer) =>
+      customer.normalizedDocument !== null &&
+      customer.normalizedDocument !== undefined &&
+      customer.normalizedDocument === searchDigits,
+  );
+  const canCreateNewClient =
+    isDocumentLikeInput(clientSearch) &&
+    !selectedCustomer &&
+    !exactDocumentMatch;
+
+  useEffect(() => {
+    if (!open) return;
+    setClientSearch("");
+    setSelectedCustomer(null);
+    setNewFirstName("");
+    setNewLastName("");
+    setNewPhone("");
+    setSelectedServices([]);
+    setStaffMemberId("");
+    setAppointmentDate("");
+    setAppointmentTime("");
+    setLocalError(null);
+  }, [open]);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const startAt = combineLocalDateAndTime(appointmentDate, appointmentTime);
+
+    if (selectedServiceIds.length === 0 || !staffMemberId || !startAt) {
+      setLocalError(
+        "Seleccioná fecha, hora, servicio y staff para crear la cita.",
+      );
+      return;
+    }
+
+    const client = selectedCustomer
+      ? ({ kind: "existing", clientId: selectedCustomer.id } as const)
+      : canCreateNewClient
+        ? ({
+            kind: "new",
+            firstName: newFirstName,
+            lastName: newLastName,
+            phone: newPhone || null,
+            documentNumber: clientSearch,
+          } as const)
+        : null;
+
+    if (!client) {
+      setLocalError(
+        "Buscá y seleccioná un cliente, o cargá uno nuevo por DNI.",
+      );
+      return;
+    }
+
+    if (
+      client.kind === "new" &&
+      (!newFirstName.trim() || !newLastName.trim())
+    ) {
+      setLocalError("Completá nombre y apellido para crear el cliente.");
+      return;
+    }
+
+    setLocalError(null);
+    onSubmit({
+      client,
+      serviceIds: selectedServiceIds,
+      staffMemberId,
+      startAt,
+    });
+  }
+
+  function addService(service: ServiceDto) {
+    setSelectedServices((current) =>
+      current.some((selected) => selected.id === service.id)
+        ? current
+        : [...current, service],
+    );
+  }
+
+  function removeService(serviceId: string) {
+    setSelectedServices((current) =>
+      current.filter((service) => service.id !== serviceId),
+    );
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <DialogHeader>
+            <DialogTitle>Nueva cita</DialogTitle>
+            <DialogDescription>
+              Agendá una solicitud de WhatsApp y reservá el lugar en la cola.
+            </DialogDescription>
+          </DialogHeader>
+
+          {(localError ?? error) && (
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {localError ?? error}
+            </p>
+          )}
+
+          <ClientAutocompleteField
+            value={clientSearch}
+            selectedCustomer={selectedCustomer}
+            suggestions={clientSuggestions}
+            isSearching={clientSuggestionsQuery.isFetching}
+            disabled={isSubmitting}
+            onChange={(value) => {
+              setClientSearch(value);
+              setSelectedCustomer(null);
+            }}
+            onSelect={(customer) => {
+              setSelectedCustomer(customer);
+              setClientSearch(customerLabel(customer));
+            }}
+          />
+          {canCreateNewClient && !clientSuggestionsQuery.isFetching && (
+            <div className="space-y-3 rounded-xl border border-border bg-surface p-3">
+              <p className="text-xs text-muted-foreground">
+                No encontramos ese DNI. Completá los datos para crear el cliente
+                junto con la cita.
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <TextField
+                  label="Nombre"
+                  value={newFirstName}
+                  disabled={isSubmitting}
+                  onChange={setNewFirstName}
+                />
+                <TextField
+                  label="Apellido"
+                  value={newLastName}
+                  disabled={isSubmitting}
+                  onChange={setNewLastName}
+                />
+              </div>
+              <TextField
+                label="Teléfono"
+                value={newPhone}
+                disabled={isSubmitting}
+                onChange={setNewPhone}
+              />
+            </div>
+          )}
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <DatePickerField
+              label="Fecha"
+              value={appointmentDate}
+              disabled={isSubmitting}
+              onChange={setAppointmentDate}
+            />
+            <SelectField
+              label="Hora"
+              value={appointmentTime}
+              placeholder="Seleccionar hora"
+              disabled={isSubmitting}
+              onValueChange={setAppointmentTime}
+              items={APPOINTMENT_TIME_OPTIONS}
+            />
+          </div>
+          <ServiceMultiSelect
+            selectedStaff={
+              staff.find((member) => member.id === staffMemberId) ?? null
+            }
+            selectedServiceIds={selectedServiceIds}
+            selectedServices={selectedServices}
+            disabled={isSubmitting || isLoading}
+            isLoading={isLoading}
+            onAddService={addService}
+            onRemoveService={removeService}
+          />
+          <SelectField
+            label="Staff asignado"
+            value={staffMemberId}
+            placeholder={isLoading ? "Cargando staff…" : "Seleccionar staff"}
+            disabled={isSubmitting || isLoading}
+            onValueChange={setStaffMemberId}
+            items={staff.map((member) => ({
+              value: member.id,
+              label: member.displayName,
+            }))}
+          />
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={isSubmitting}
+              onClick={() => onOpenChange(false)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              type="submit"
+              disabled={
+                isSubmitting || isLoading || selectedServiceIds.length === 0
+              }
+            >
+              {isSubmitting ? "Creando…" : "Crear cita"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function ServiceMultiSelect({
   selectedStaff,
   selectedServiceIds,
@@ -1345,7 +1968,7 @@ function ClientAutocompleteField({
   );
 }
 
-function TextField({
+function DatePickerField({
   label,
   value,
   disabled,
@@ -1357,12 +1980,75 @@ function TextField({
   onChange: (value: string) => void;
 }) {
   const id = label.toLowerCase().replaceAll(" ", "-");
+  const [isOpen, setIsOpen] = useState(false);
+  const selectedDate = dateInputValueToLocalDate(value);
+
+  return (
+    <div className="relative space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Button
+        id={id}
+        type="button"
+        variant="outline"
+        disabled={disabled}
+        aria-haspopup="dialog"
+        aria-expanded={isOpen}
+        aria-label={
+          value ? `Fecha: ${formatAppointmentDate(value)}` : "Seleccionar fecha"
+        }
+        onClick={() => setIsOpen((current) => !current)}
+        className={cn(
+          "w-full justify-start gap-2 text-left font-normal",
+          !value && "text-muted-foreground",
+        )}
+      >
+        <CalendarIcon className="h-4 w-4" />
+        <span>{formatAppointmentDate(value)}</span>
+      </Button>
+      {isOpen && (
+        <div
+          role="dialog"
+          aria-label="Calendario de cita"
+          className="absolute left-0 top-full z-50 mt-2 rounded-md border bg-popover p-0 text-popover-foreground shadow-md"
+        >
+          <Calendar
+            mode="single"
+            locale={es}
+            selected={selectedDate}
+            defaultMonth={selectedDate}
+            onSelect={(date) => {
+              if (!date) return;
+              onChange(localDateToDateInputValue(date));
+              setIsOpen(false);
+            }}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TextField({
+  label,
+  type = "text",
+  value,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  type?: string;
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const id = label.toLowerCase().replaceAll(" ", "-");
 
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id}>{label}</Label>
       <Input
         id={id}
+        type={type}
         value={value}
         disabled={disabled}
         onChange={(event) => onChange(event.target.value)}

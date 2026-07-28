@@ -72,7 +72,7 @@ describe("StaffCrudPage", () => {
     );
     await userEvent.type(
       screen.getByLabelText("Valor de comisión para Classic Cut"),
-      "1200",
+      "30",
     );
     expect(screen.queryByLabelText("Modo de comisión")).not.toBeInTheDocument();
     expect(
@@ -100,7 +100,7 @@ describe("StaffCrudPage", () => {
             {
               serviceId: "service_1",
               commissionMode: "PERCENTAGE_BPS",
-              commissionValue: "1200",
+              commissionValue: "3000",
             },
           ],
         }),

@@ -14,7 +14,7 @@ import { DashboardPage } from "@/routes/dashboard";
 import { LoginPage } from "@/routes/login";
 import { ProductsPage } from "@/routes/products";
 import { QueueDisplayPage, QueuePage } from "@/routes/queue";
-import { ReportsPage } from "@/routes/reports";
+import { SalesReportPage, StaffLiquidationsReportPage } from "@/routes/reports";
 import { SalesPage } from "@/routes/sales";
 import { ServicesPage } from "@/routes/services";
 import { SettingsPage } from "@/routes/settings";
@@ -39,7 +39,15 @@ export const appRoutes: RouteObject[] = [
           { path: "services", element: <ServicesPage /> },
           { path: "products", element: <ProductsPage /> },
           { path: "staff", element: <StaffPage /> },
-          { path: "reports", element: <ReportsPage /> },
+          {
+            path: "reports",
+            element: <Navigate to="/reports/staff-liquidations" replace />,
+          },
+          {
+            path: "reports/staff-liquidations",
+            element: <StaffLiquidationsReportPage />,
+          },
+          { path: "reports/sales", element: <SalesReportPage /> },
           { path: "settings", element: <SettingsPage /> },
         ],
       },

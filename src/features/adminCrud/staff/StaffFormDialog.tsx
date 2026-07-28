@@ -110,7 +110,10 @@ export function StaffFormDialog({
                 commission.serviceId,
                 {
                   commissionMode: commission.commissionMode,
-                  commissionValue: commission.commissionValue,
+                  commissionValue: commissionValueToFormInput(
+                    commission.commissionMode,
+                    commission.commissionValue,
+                  ),
                 },
               ]),
             ),
@@ -189,10 +192,19 @@ export function StaffFormDialog({
           );
         }
 
+        if (commission.commissionMode === "PERCENTAGE_BPS" && value > 100) {
+          throw new Error(
+            `La comisión porcentual de ${service.name} no puede superar 100%.`,
+          );
+        }
+
         return {
           serviceId: service.id,
           commissionMode: commission.commissionMode,
-          commissionValue: commission.commissionValue.trim(),
+          commissionValue: commissionValueToApiInput(
+            commission.commissionMode,
+            commission.commissionValue,
+          ),
         };
       });
 
@@ -334,7 +346,8 @@ export function StaffFormDialog({
               </h3>
               <p className="text-xs text-muted-foreground">
                 Se muestran los servicios activos que aceptan al menos uno de
-                los roles seleccionados.
+                los roles seleccionados. En porcentaje, escribí el valor humano:
+                30 significa 30%.
               </p>
             </div>
             {servicesQuery.isLoading ? (
@@ -520,4 +533,30 @@ function staffRoleLabel(role: StaffRole) {
   return (
     staffRoleOptions.find((option) => option.value === role)?.label ?? role
   );
+}
+
+function commissionValueToFormInput(mode: CommissionMode, storedValue: string) {
+  if (mode !== "PERCENTAGE_BPS") return trimNumericString(storedValue);
+
+  return trimNumericString(String(Number(storedValue) / 100));
+}
+
+function commissionValueToApiInput(mode: CommissionMode, formValue: string) {
+  if (mode === "NONE") return "0";
+
+  const value = Number(formValue);
+
+  if (mode === "PERCENTAGE_BPS") {
+    return String(Math.round(value * 100));
+  }
+
+  return formValue.trim();
+}
+
+function trimNumericString(value: string) {
+  const numeric = Number(value);
+
+  if (!Number.isFinite(numeric)) return value;
+
+  return String(numeric);
 }

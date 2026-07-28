@@ -37,6 +37,9 @@ function createTicket(overrides: Partial<QueueTicketRecord> = {}) {
     clientId: "client_1",
     staffMemberId: "staff_1",
     status: "CHECKED_IN",
+    source: "WALK_IN",
+    startAt: now,
+    endAt: new Date("2026-01-01T12:45:00.000Z"),
     queueStatus: "WAITING",
     queuedAt: now,
     queuePosition: 2,
@@ -79,6 +82,7 @@ function createRepository(): QueueRepository {
         ],
       },
     ]),
+    listAppointmentsByDate: vi.fn(async () => []),
     findActiveClient: vi.fn(async () => ({ id: "client_1" })),
     findActiveStaff: vi.fn(async () => ({ id: "staff_1" })),
     findActiveService: vi.fn(async () => ({
@@ -102,11 +106,25 @@ function createRepository(): QueueRepository {
       },
     ]),
     createWalkIn: vi.fn(async () => createTicket()),
+    createScheduledAppointment: vi.fn(async ({ data }) =>
+      createTicket({
+        source: "PHONE",
+        startAt: data.startAt,
+        endAt: new Date(data.startAt.getTime() + 65 * 60_000),
+      }),
+    ),
     updateTicket: vi.fn(async ({ data }) =>
       createTicket({
         clientId: data.clientId ?? "client_1",
         staffMemberId: data.staffMemberId ?? "staff_1",
         queueStatus: data.queueStatus ?? "WAITING",
+      }),
+    ),
+    cancelTicket: vi.fn(async () =>
+      createTicket({
+        status: "CANCELLED",
+        queueStatus: "LEFT",
+        queuePosition: null,
       }),
     ),
   };
@@ -215,6 +233,39 @@ describe("queue service", () => {
         code: "BAD_REQUEST",
         message:
           "Walk-in queue ticket references an inactive or missing client.",
+      }),
+    );
+  });
+
+  it("creates scheduled appointments after validating tenant-owned references", async () => {
+    const service = createQueueService(repository);
+    const startAt = new Date("2026-01-01T15:00:00.000Z");
+
+    const result = await service.createScheduledAppointment(
+      baseContext,
+      {
+        serviceIds: ["service_1", "service_2"],
+        staffMemberId: "staff_1",
+        client: { kind: "existing", clientId: "client_1" },
+        startAt,
+      },
+      now,
+    );
+
+    expect(repository.createScheduledAppointment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        barberShopId: "shop_1",
+        services: [
+          expect.objectContaining({ id: "service_1" }),
+          expect.objectContaining({ id: "service_2" }),
+        ],
+        now,
+      }),
+    );
+    expect(result).toEqual(
+      expect.objectContaining({
+        source: "PHONE",
+        startAt: startAt.toISOString(),
       }),
     );
   });

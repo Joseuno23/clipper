@@ -2,13 +2,19 @@ import {
   AppointmentStatus,
   QueueStatus,
 } from "../../../generated/prisma/enums";
+import { BUSINESS_TIME_ZONE } from "../../../shared/lib/businessLocale";
 import { ApiError } from "../../api/errors";
+import { getShopLocalDayBoundariesForDateKey } from "../../timezone";
 import { requireAdminCapable } from "../auth/service";
 import type { AuthContext } from "../auth/types";
 import type {
+  AppointmentListItemDto,
+  AppointmentListItemRecord,
   LiveQueuesDto,
   QueueCreateInput,
+  QueueCancelInput,
   QueueRepository,
+  ScheduledAppointmentCreateInput,
   QueueStaffRecord,
   QueueTicketDto,
   QueueTicketRecord,
@@ -25,6 +31,23 @@ export function createQueueService(repository: QueueRepository) {
       return { queues: records.map(toStaffQueueDto) };
     },
 
+    async listAppointmentsByDate(
+      context: AuthContext,
+      input: { date: string },
+    ): Promise<AppointmentListItemDto[]> {
+      const boundaries = getShopLocalDayBoundariesForDateKey(
+        context.tenant.timezone || BUSINESS_TIME_ZONE,
+        input.date,
+      );
+      const records = await repository.listAppointmentsByDate({
+        barberShopId: context.tenant.barberShopId,
+        from: boundaries.startsAt,
+        toExclusive: boundaries.endsAt,
+      });
+
+      return records.map(toAppointmentListItemDto);
+    },
+
     async createWalkIn(
       context: AuthContext,
       data: QueueCreateInput,
@@ -32,6 +55,7 @@ export function createQueueService(repository: QueueRepository) {
     ) {
       requireAdminCapable(context);
       const barberShopId = context.tenant.barberShopId;
+      const timeZone = context.tenant.timezone || BUSINESS_TIME_ZONE;
 
       if (data.client.kind === "existing") {
         await assertActiveClient(
@@ -61,9 +85,48 @@ export function createQueueService(repository: QueueRepository) {
         return toQueueTicketDto(
           await repository.createWalkIn({
             barberShopId,
+            timeZone,
             data,
             services: orderedServices,
             queuedAt,
+          }),
+        );
+      } catch (error) {
+        throw mapQueueCreateError(error);
+      }
+    },
+
+    async createScheduledAppointment(
+      context: AuthContext,
+      data: ScheduledAppointmentCreateInput,
+      now = new Date(),
+    ) {
+      requireAdminCapable(context);
+      const barberShopId = context.tenant.barberShopId;
+      const timeZone = context.tenant.timezone || BUSINESS_TIME_ZONE;
+
+      if (data.client.kind === "existing") {
+        await assertActiveClient(
+          repository,
+          barberShopId,
+          data.client.clientId,
+        );
+      }
+      await assertActiveStaff(repository, barberShopId, data.staffMemberId);
+      const services = await findOrderedActiveServices(
+        repository,
+        barberShopId,
+        data.serviceIds,
+      );
+
+      try {
+        return toQueueTicketDto(
+          await repository.createScheduledAppointment({
+            barberShopId,
+            timeZone,
+            data,
+            services,
+            now,
           }),
         );
       } catch (error) {
@@ -98,6 +161,28 @@ export function createQueueService(repository: QueueRepository) {
         ticketId,
         data,
         services,
+      });
+
+      if (!ticket) {
+        throw new ApiError({
+          code: "NOT_FOUND",
+          message: "Queue ticket was not found.",
+        });
+      }
+
+      return toQueueTicketDto(ticket);
+    },
+
+    async cancelTicket(
+      context: AuthContext,
+      ticketId: string,
+      data: QueueCancelInput,
+    ) {
+      requireAdminCapable(context);
+      const ticket = await repository.cancelTicket({
+        barberShopId: context.tenant.barberShopId,
+        ticketId,
+        reason: data.reason,
       });
 
       if (!ticket) {
@@ -146,6 +231,9 @@ export function toQueueTicketDto(record: QueueTicketRecord): QueueTicketDto {
       : "Cliente sin asignar",
     staffMemberId: record.staffMemberId,
     status: record.status,
+    source: record.source,
+    startAt: record.startAt.toISOString(),
+    endAt: record.endAt.toISOString(),
     queueStatus: record.queueStatus,
     queuedAt: record.queuedAt?.toISOString() ?? null,
     queuePosition: record.queuePosition,
@@ -160,6 +248,20 @@ export function toQueueTicketDto(record: QueueTicketRecord): QueueTicketDto {
         durationMinutes: service.serviceDurationSnapshot,
         price: service.servicePriceSnapshot.toString(),
       })),
+  };
+}
+
+function toAppointmentListItemDto(
+  record: AppointmentListItemRecord,
+): AppointmentListItemDto {
+  const ticket = toQueueTicketDto(record);
+
+  return {
+    ...ticket,
+    staffName: record.staffMember
+      ? record.staffMember.displayName ||
+        `${record.staffMember.firstName} ${record.staffMember.lastName}`
+      : null,
   };
 }
 

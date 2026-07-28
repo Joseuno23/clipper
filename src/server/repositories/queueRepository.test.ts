@@ -19,6 +19,19 @@ const prisma = vi.hoisted(() => ({
     deleteMany: vi.fn(),
     createMany: vi.fn(),
   },
+  staffMember: {
+    findMany: vi.fn(),
+  },
+  sale: {
+    create: vi.fn(),
+    findFirst: vi.fn(),
+    update: vi.fn(),
+  },
+  saleItem: {
+    deleteMany: vi.fn(),
+    createMany: vi.fn(),
+    findMany: vi.fn(),
+  },
   $executeRawUnsafe: vi.fn(),
   $transaction: vi.fn(async (callback) => callback(prisma)),
 }));
@@ -49,7 +62,9 @@ describe("queueRepository", () => {
       _max: { queuePosition: 2 },
     });
     prisma.appointment.count.mockReset().mockResolvedValue(0);
-    prisma.appointment.create.mockReset().mockResolvedValue({});
+    prisma.appointment.create
+      .mockReset()
+      .mockResolvedValue({ id: "appt_created" });
     prisma.appointment.findMany.mockReset().mockResolvedValue([]);
     prisma.appointment.findFirst.mockReset().mockResolvedValue({
       id: "appt_1",
@@ -58,6 +73,7 @@ describe("queueRepository", () => {
       queueStatus: "WAITING",
       startAt: queuedAt,
     });
+    prisma.staffMember.findMany.mockReset().mockResolvedValue([]);
     prisma.appointment.update.mockReset().mockResolvedValue({});
     prisma.appointmentService.deleteMany
       .mockReset()
@@ -65,6 +81,12 @@ describe("queueRepository", () => {
     prisma.appointmentService.createMany
       .mockReset()
       .mockResolvedValue({ count: 2 });
+    prisma.sale.create.mockReset().mockResolvedValue({ id: "sale_1" });
+    prisma.sale.findFirst.mockReset().mockResolvedValue({ id: "sale_1" });
+    prisma.sale.update.mockReset().mockResolvedValue({ id: "sale_1" });
+    prisma.saleItem.deleteMany.mockReset().mockResolvedValue({ count: 1 });
+    prisma.saleItem.createMany.mockReset().mockResolvedValue({ count: 2 });
+    prisma.saleItem.findMany.mockReset().mockResolvedValue([]);
     prisma.client.create.mockReset().mockResolvedValue({ id: "client_new" });
     prisma.$executeRawUnsafe.mockReset().mockResolvedValue(undefined);
     prisma.$transaction
@@ -98,6 +120,15 @@ describe("queueRepository", () => {
           status: "IN_SERVICE",
           queueStatus: "IN_SERVICE",
           queuePosition: 1,
+        }),
+      }),
+    );
+    expect(prisma.sale.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          appointmentId: "appt_created",
+          status: "DRAFT",
+          businessDate: new Date("2026-01-01T12:00:00.000Z"),
         }),
       }),
     );
@@ -197,7 +228,6 @@ describe("queueRepository", () => {
       where: {
         barberShopId: "shop_1",
         clientId: "client_1",
-        source: "WALK_IN",
         deletedAt: null,
         queueStatus: { in: ["IN_SERVICE", "CALLED", "WAITING"] },
       },
@@ -256,6 +286,185 @@ describe("queueRepository", () => {
       }),
     );
     expect(prisma.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects scheduled appointments when active queue overruns requested time", async () => {
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      availabilityTicket({
+        id: "chair",
+        queueStatus: "IN_SERVICE",
+        queuePosition: 1,
+        durationMinutes: 65,
+      }),
+      availabilityTicket({
+        id: "waiting",
+        queueStatus: "WAITING",
+        queuePosition: 2,
+        durationMinutes: 65,
+      }),
+    ]);
+
+    await expect(
+      queueRepository.createScheduledAppointment({
+        barberShopId: "shop_1",
+        data: {
+          serviceIds: ["service_1"],
+          staffMemberId: "staff_1",
+          client: { kind: "existing", clientId: "client_1" },
+          startAt: new Date("2026-01-01T11:00:00.000Z"),
+        },
+        services: [service],
+        now: new Date("2026-01-01T10:00:00.000Z"),
+      }),
+    ).rejects.toThrow(/unavailable/);
+
+    expect(prisma.appointment.create).not.toHaveBeenCalled();
+  });
+
+  it("accepts scheduled appointments outside the live queue and creates draft sale", async () => {
+    prisma.appointment.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+
+    await queueRepository.createScheduledAppointment({
+      barberShopId: "shop_1",
+      timeZone: "America/Argentina/Buenos_Aires",
+      data: {
+        serviceIds: ["service_1", "service_2"],
+        staffMemberId: "staff_1",
+        client: { kind: "existing", clientId: "client_1" },
+        startAt: new Date("2026-01-02T15:00:00.000Z"),
+      },
+      services: [service, beardService],
+      now: queuedAt,
+    });
+
+    expect(prisma.appointment.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          source: "PHONE",
+          status: "SCHEDULED",
+          queueStatus: "NOT_QUEUED",
+          queuedAt: null,
+          checkedInAt: null,
+          queuePosition: null,
+          startAt: new Date("2026-01-02T15:00:00.000Z"),
+          endAt: new Date("2026-01-02T16:05:00.000Z"),
+          services: {
+            create: [
+              expect.objectContaining({ serviceId: "service_1", sortOrder: 0 }),
+              expect.objectContaining({ serviceId: "service_2", sortOrder: 1 }),
+            ],
+          },
+        }),
+      }),
+    );
+    expect(prisma.appointment.aggregate).not.toHaveBeenCalled();
+    expect(prisma.sale.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          appointmentId: "appt_created",
+          status: "DRAFT",
+          businessDate: new Date("2026-01-02T12:00:00.000Z"),
+        }),
+      }),
+    );
+  });
+
+  it("excludes future scheduled appointments from live queues", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T10:00:00.000Z"));
+    prisma.staffMember.findMany.mockResolvedValueOnce([
+      {
+        id: "staff_1",
+        displayName: "Grace Hopper",
+        firstName: "Grace",
+        lastName: "Hopper",
+        roles: [],
+        specialties: [],
+      },
+    ]);
+    prisma.appointment.findMany.mockResolvedValueOnce([]);
+
+    try {
+      const queues = await queueRepository.listLiveQueues({
+        barberShopId: "shop_1",
+      });
+
+      expect(prisma.appointment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            queueStatus: { in: ["IN_SERVICE", "CALLED", "WAITING"] },
+            OR: [
+              { source: "WALK_IN" },
+              {
+                source: { not: "WALK_IN" },
+                startAt: { lte: new Date("2026-01-01T10:00:00.000Z") },
+              },
+            ],
+          }),
+        }),
+      );
+      expect(queues).toEqual([
+        expect.objectContaining({ id: "staff_1", tickets: [] }),
+      ]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("includes existing scheduled appointments in availability conflicts", async () => {
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      availabilityTicket({
+        id: "scheduled",
+        queueStatus: "NOT_QUEUED",
+        status: "SCHEDULED",
+        startAt: new Date("2026-01-01T15:00:00.000Z"),
+        durationMinutes: 45,
+      }),
+    ]);
+
+    await expect(
+      queueRepository.createScheduledAppointment({
+        barberShopId: "shop_1",
+        data: {
+          serviceIds: ["service_2"],
+          staffMemberId: "staff_1",
+          client: { kind: "existing", clientId: "client_1" },
+          startAt: new Date("2026-01-01T15:30:00.000Z"),
+        },
+        services: [beardService],
+        now: queuedAt,
+      }),
+    ).rejects.toThrow(/unavailable/);
+  });
+
+  it("keeps queued phone appointments fixed at their scheduled time for availability", async () => {
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      availabilityTicket({
+        id: "scheduled_in_queue",
+        source: "PHONE",
+        queueStatus: "WAITING",
+        status: "CHECKED_IN",
+        queuePosition: 1,
+        startAt: new Date("2026-01-01T15:00:00.000Z"),
+        durationMinutes: 45,
+      }),
+    ]);
+
+    await expect(
+      queueRepository.createScheduledAppointment({
+        barberShopId: "shop_1",
+        data: {
+          serviceIds: ["service_2"],
+          staffMemberId: "staff_1",
+          client: { kind: "existing", clientId: "client_1" },
+          startAt: new Date("2026-01-01T15:30:00.000Z"),
+        },
+        services: [beardService],
+        now: new Date("2026-01-01T10:00:00.000Z"),
+      }),
+    ).rejects.toThrow(/unavailable/);
   });
 
   it("moves waiting tickets to the destination queue end", async () => {
@@ -700,7 +909,6 @@ describe("queueRepository", () => {
         id: { not: "appt_1" },
         barberShopId: "shop_1",
         clientId: "client_2",
-        source: "WALK_IN",
         deletedAt: null,
         queueStatus: { in: ["IN_SERVICE", "CALLED", "WAITING"] },
       },
@@ -742,7 +950,6 @@ describe("queueRepository", () => {
         where: expect.objectContaining({
           id: "appt_1",
           barberShopId: "shop_1",
-          source: "WALK_IN",
           deletedAt: null,
         }),
       }),
@@ -777,4 +984,81 @@ describe("queueRepository", () => {
       }),
     );
   });
+
+  it("cancels an active ticket and its linked draft sale", async () => {
+    prisma.appointment.findFirst
+      .mockResolvedValueOnce({ id: "appt_1" })
+      .mockResolvedValueOnce({
+        id: "appt_1",
+        staffMemberId: "staff_1",
+        queueStatus: "WAITING",
+        queuePosition: 2,
+      })
+      .mockResolvedValueOnce({ id: "appt_1" });
+    prisma.sale.findFirst.mockResolvedValueOnce({
+      id: "sale_1",
+      status: "DRAFT",
+    });
+    prisma.appointment.findMany.mockResolvedValueOnce([
+      { id: "appt_2", queuePosition: 3, queuedAt },
+    ]);
+    prisma.appointment.aggregate.mockResolvedValueOnce({
+      _max: { queuePosition: 1 },
+    });
+
+    await queueRepository.cancelTicket({
+      barberShopId: "shop_1",
+      ticketId: "appt_1",
+      reason: "Cliente canceló",
+    });
+
+    expect(prisma.sale.update).toHaveBeenCalledWith({
+      where: { id: "sale_1" },
+      data: { status: "CANCELLED", cancellationReason: "Cliente canceló" },
+    });
+    expect(prisma.appointment.update).toHaveBeenCalledWith({
+      where: { id: "appt_1" },
+      data: {
+        queueStatus: "LEFT",
+        status: "CANCELLED",
+        queuePosition: null,
+        cancellationReason: "Cliente canceló",
+      },
+    });
+    expect(prisma.appointment.update).toHaveBeenCalledWith({
+      where: { id: "appt_2" },
+      data: { queuePosition: 2 },
+    });
+  });
 });
+
+function availabilityTicket({
+  id,
+  source = "WALK_IN",
+  queueStatus,
+  status = "CHECKED_IN",
+  queuePosition = null,
+  startAt = queuedAt,
+  durationMinutes,
+}: {
+  id: string;
+  source?: string;
+  queueStatus: string;
+  status?: string;
+  queuePosition?: number | null;
+  startAt?: Date;
+  durationMinutes: number;
+}) {
+  return {
+    id,
+    source,
+    status,
+    queueStatus,
+    queuePosition,
+    queuedAt: startAt,
+    startAt,
+    endAt: new Date(startAt.getTime() + durationMinutes * 60_000),
+    services: [{ serviceDurationSnapshot: durationMinutes }],
+    client: null,
+  };
+}

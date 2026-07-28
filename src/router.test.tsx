@@ -67,7 +67,9 @@ describe("React Router route behavior", () => {
     ["/services", "Servicios"],
     ["/products", "Productos"],
     ["/staff", "Staff"],
-    ["/reports", "Reportes"],
+    ["/reports", "Liquidación de staff"],
+    ["/reports/staff-liquidations", "Liquidación de staff"],
+    ["/reports/sales", "Reporte de ventas"],
     ["/settings", "Configuración"],
   ])("renders authenticated private route %s", async (path, expectedText) => {
     saveAuthSession({ token: "jwt_1", shopSlug: "niche-72" });
@@ -96,6 +98,50 @@ describe("React Router route behavior", () => {
     expect(
       tvLinks.some((link) => link.getAttribute("href") === "/queue/display"),
     ).toBe(true);
+  });
+
+  it("shows separate sidebar entries for staff liquidation and sales reports", async () => {
+    saveAuthSession({ token: "jwt_1", shopSlug: "niche-72" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ ok: true, data: [] })),
+    );
+
+    renderRoute("/reports/staff-liquidations");
+
+    expect(
+      await screen.findByRole("link", { name: "Liquidación de staff" }),
+    ).toHaveAttribute("href", "/reports/staff-liquidations");
+    expect(
+      screen.getByRole("link", { name: "Reporte de ventas" }),
+    ).toHaveAttribute("href", "/reports/sales");
+  });
+
+  it("renders only the selected report content on each report route", async () => {
+    saveAuthSession({ token: "jwt_1", shopSlug: "niche-72" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(Response.json({ ok: true, data: [] })),
+    );
+
+    renderRoute("/reports/staff-liquidations");
+
+    expect(
+      await screen.findByRole("heading", { name: "Liquidación de staff" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Reporte de ventas" }),
+    ).not.toBeInTheDocument();
+
+    cleanup();
+    renderRoute("/reports/sales");
+
+    expect(
+      await screen.findByRole("heading", { name: "Reporte de ventas" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Liquidación de staff" }),
+    ).not.toBeInTheDocument();
   });
 
   it("redirects protected routes to login when an authenticated API call returns 401", async () => {

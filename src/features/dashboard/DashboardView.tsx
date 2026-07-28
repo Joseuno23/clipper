@@ -6,43 +6,100 @@ import {
   Sparkles,
   ArrowUpRight,
 } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+
 import { MetricCard } from "@/widgets/metrics/MetricCard";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { StatusBadge } from "@/shared/components/StatusBadge";
 import { Button } from "@/components/ui/button";
-import { appointments, sales, queue, products } from "@/entities/mock-data";
-import { findCustomer, findStaff, findService } from "@/entities/selectors";
+import { adminCrudKeys, productsApi } from "@/shared/api/adminCrud";
+import { appointmentKeys, appointmentsApi } from "@/shared/api/appointments";
+import { queueApi, queueKeys } from "@/shared/api/queue";
+import { reportKeys, reportsApi } from "@/shared/api/reports";
+import { salesApi, salesKeys } from "@/shared/api/sales";
+import { businessDateInputValue } from "@/shared/lib/businessLocale";
 import { currency, time, initials } from "@/shared/lib/format";
 import { cn } from "@/lib/utils";
 
 const STATUS_TONE = {
-  scheduled: "neutral",
-  checked_in: "info",
-  in_progress: "primary",
-  completed: "success",
-  cancelled: "destructive",
-  no_show: "warning",
+  SCHEDULED: "neutral",
+  CONFIRMED: "info",
+  CHECKED_IN: "info",
+  IN_SERVICE: "primary",
+  COMPLETED: "success",
+  CANCELLED: "destructive",
+  NO_SHOW: "warning",
 } as const;
 
 const STATUS_LABEL = {
-  scheduled: "Programada",
-  checked_in: "Check-in",
-  in_progress: "En curso",
-  completed: "Completada",
-  cancelled: "Cancelada",
-  no_show: "No-show",
+  SCHEDULED: "Programada",
+  CONFIRMED: "Confirmada",
+  CHECKED_IN: "Check-in",
+  IN_SERVICE: "En curso",
+  COMPLETED: "Completada",
+  CANCELLED: "Cancelada",
+  NO_SHOW: "No-show",
 } as const;
+
+const AVATAR_COLORS = ["#7c3aed", "#0f766e", "#c2410c", "#be123c"];
 
 export function DashboardView() {
   const today = new Date();
-  const todays = appointments;
-  const openSales = sales.filter((s) => s.status === "open");
-  const paidToday = sales.filter((s) => s.status === "paid");
-  const totalRevenue = paidToday.reduce(
-    (acc, s) => acc + s.items.reduce((a, i) => a + i.unitPrice * i.qty, 0),
-    0,
+  const todayKey = businessDateInputValue(today);
+  const salesReportQuery = useQuery({
+    queryKey: reportKeys.sales({ from: todayKey, to: todayKey }),
+    queryFn: () => reportsApi.sales({ from: todayKey, to: todayKey }),
+  });
+  const appointmentsQuery = useQuery({
+    queryKey: appointmentKeys.listByDate(todayKey),
+    queryFn: () => appointmentsApi.listByDate(todayKey),
+  });
+  const queueQuery = useQuery({
+    queryKey: queueKeys.live,
+    queryFn: queueApi.live,
+  });
+  const openSalesQuery = useQuery({
+    queryKey: salesKeys.list({ status: "open", date: todayKey, limit: 100 }),
+    queryFn: () =>
+      salesApi.list({ status: "open", date: todayKey, limit: 100 }),
+  });
+  const productsQuery = useQuery({
+    queryKey: adminCrudKeys.productsList({ limit: 100, offset: 0 }),
+    queryFn: () => productsApi.list({ limit: 100, offset: 0 }),
+  });
+
+  const todays = appointmentsQuery.data ?? [];
+  const openSales = openSalesQuery.data ?? [];
+  const queueTickets = (queueQuery.data?.queues ?? []).flatMap(
+    (staffQueue) => staffQueue.tickets,
   );
-  const lowStock = products.filter((p) => p.stock <= p.lowStockThreshold);
+  const waitingTickets = queueTickets.filter(
+    (ticket) =>
+      (ticket.queueStatus === "WAITING" || ticket.queueStatus === "CALLED") &&
+      ticket.queuedAt,
+  );
+  const avgWaitMinutes = waitingTickets.length
+    ? Math.round(
+        waitingTickets.reduce(
+          (total, ticket) =>
+            total +
+            Math.max(
+              0,
+              today.getTime() - new Date(ticket.queuedAt!).getTime(),
+            ) /
+              60000,
+          0,
+        ) / waitingTickets.length,
+      )
+    : 0;
+  const lowStock = (productsQuery.data ?? []).filter((product) => {
+    if (product.lowStockAt === null) return false;
+    return product.currentStock <= product.lowStockAt;
+  });
+  const totalRevenue = Number(salesReportQuery.data?.summary.totalRevenue ?? 0);
+  const completedAppointments = todays.filter(
+    (appointment) => appointment.status === "COMPLETED",
+  ).length;
 
   return (
     <>
@@ -63,29 +120,42 @@ export function DashboardView() {
       <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <MetricCard
           label="Ventas del día"
-          value={currency(totalRevenue)}
-          delta={{ value: "+18.2%", positive: true }}
-          hint="vs. ayer"
+          value={salesReportQuery.isLoading ? "..." : currency(totalRevenue)}
+          hint={
+            salesReportQuery.isError
+              ? "No se pudo cargar"
+              : `${salesReportQuery.data?.summary.orderCount ?? 0} ventas cobradas`
+          }
           icon={<Wallet className="h-4 w-4" />}
         />
         <MetricCard
           label="Citas hoy"
-          value={todays.length}
-          delta={{ value: "+3", positive: true }}
-          hint={`${todays.filter((a) => a.status === "completed").length} completadas`}
+          value={appointmentsQuery.isLoading ? "..." : todays.length}
+          hint={
+            appointmentsQuery.isError
+              ? "No se pudo cargar"
+              : `${completedAppointments} completadas`
+          }
           icon={<Calendar className="h-4 w-4" />}
         />
         <MetricCard
           label="En cola"
-          value={queue.length}
-          hint="espera promedio 14 min"
+          value={queueQuery.isLoading ? "..." : queueTickets.length}
+          hint={
+            queueQuery.isError
+              ? "No se pudo cargar"
+              : waitingTickets.length
+                ? `espera promedio ${avgWaitMinutes} min`
+                : "sin espera activa"
+          }
           icon={<Clock className="h-4 w-4" />}
         />
         <MetricCard
           label="Ticket pendiente"
-          value={openSales.length}
-          delta={{ value: "-1", positive: false }}
-          hint="ventas abiertas"
+          value={openSalesQuery.isLoading ? "..." : openSales.length}
+          hint={
+            openSalesQuery.isError ? "No se pudo cargar" : "ventas abiertas"
+          }
           icon={<Users className="h-4 w-4" />}
         />
       </section>
@@ -98,7 +168,9 @@ export function DashboardView() {
                 Agenda de hoy
               </h2>
               <p className="text-xs text-muted-foreground">
-                {todays.length} citas programadas
+                {appointmentsQuery.isError
+                  ? "No se pudo cargar la agenda"
+                  : `${todays.length} citas programadas`}
               </p>
             </div>
             <Button variant="ghost" size="sm" className="gap-1 text-xs">
@@ -106,46 +178,62 @@ export function DashboardView() {
             </Button>
           </div>
           <ul className="divide-y divide-border/60">
-            {todays.slice(0, 6).map((a) => {
-              const customer = findCustomer(a.customerId);
-              const member = findStaff(a.staffId);
-              const service = findService(a.serviceIds[0]);
-              return (
-                <li
-                  key={a.id}
-                  className="flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-surface/60"
-                >
-                  <div className="w-14 shrink-0 text-right">
-                    <p className="font-display text-sm font-semibold tabular-nums text-foreground">
-                      {time(a.start)}
-                    </p>
-                    <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                      {service?.durationMin}m
-                    </p>
-                  </div>
-                  <div className="h-9 w-px bg-border" />
-                  <div className="flex min-w-0 flex-1 items-center gap-3">
-                    <div
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-primary-foreground"
-                      style={{ backgroundColor: member?.avatarColor }}
-                    >
-                      {initials(customer?.name ?? "")}
-                    </div>
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium text-foreground">
-                        {customer?.name}
-                      </p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {service?.name} · {member?.name}
-                      </p>
-                    </div>
-                  </div>
-                  <StatusBadge tone={STATUS_TONE[a.status]}>
-                    {STATUS_LABEL[a.status]}
-                  </StatusBadge>
+            {appointmentsQuery.isLoading && (
+              <li className="px-5 py-6 text-sm text-muted-foreground">
+                Cargando agenda...
+              </li>
+            )}
+            {appointmentsQuery.isError && (
+              <li className="px-5 py-6 text-sm text-muted-foreground">
+                No se pudo cargar la agenda de hoy.
+              </li>
+            )}
+            {!appointmentsQuery.isLoading &&
+              !appointmentsQuery.isError &&
+              todays.length === 0 && (
+                <li className="px-5 py-6 text-sm text-muted-foreground">
+                  No hay citas programadas para hoy.
                 </li>
-              );
-            })}
+              )}
+            {todays.slice(0, 6).map((appointment, index) => (
+              <li
+                key={appointment.id}
+                className="flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-surface/60"
+              >
+                <div className="w-14 shrink-0 text-right">
+                  <p className="font-display text-sm font-semibold tabular-nums text-foreground">
+                    {time(new Date(appointment.startAt))}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                    {appointment.serviceDurationMinutes ?? "--"}m
+                  </p>
+                </div>
+                <div className="h-9 w-px bg-border" />
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <div
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-xs font-semibold text-primary-foreground"
+                    style={{
+                      backgroundColor:
+                        AVATAR_COLORS[index % AVATAR_COLORS.length],
+                    }}
+                  >
+                    {initials(appointment.clientName)}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">
+                      {appointment.clientName}
+                    </p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {appointment.serviceName ?? "Sin servicio"} ·{" "}
+                      {appointment.staffName ?? "Sin staff"}
+                    </p>
+                  </div>
+                </div>
+                <StatusBadge tone={STATUS_TONE[appointment.status]}>
+                  {STATUS_LABEL[appointment.status]}
+                </StatusBadge>
+              </li>
+            ))}
           </ul>
         </div>
 
@@ -158,6 +246,23 @@ export function DashboardView() {
               <Sparkles className="h-4 w-4 text-primary" />
             </div>
             <ul className="space-y-3">
+              {productsQuery.isLoading && (
+                <li className="rounded-lg border border-border/60 bg-surface/60 p-3 text-sm text-muted-foreground">
+                  Cargando alertas...
+                </li>
+              )}
+              {productsQuery.isError && (
+                <li className="rounded-lg border border-border/60 bg-surface/60 p-3 text-sm text-muted-foreground">
+                  No se pudieron cargar las alertas de stock.
+                </li>
+              )}
+              {!productsQuery.isLoading &&
+                !productsQuery.isError &&
+                lowStock.length === 0 && (
+                  <li className="rounded-lg border border-border/60 bg-surface/60 p-3 text-sm text-muted-foreground">
+                    Sin alertas de stock bajo.
+                  </li>
+                )}
               {lowStock.map((p) => (
                 <li
                   key={p.id}
@@ -166,7 +271,7 @@ export function DashboardView() {
                   <span
                     className={cn(
                       "mt-1 h-2 w-2 shrink-0 rounded-full",
-                      p.stock === 0 ? "bg-destructive" : "bg-warning",
+                      p.currentStock === 0 ? "bg-destructive" : "bg-warning",
                     )}
                   />
                   <div className="min-w-0 flex-1">
@@ -174,24 +279,13 @@ export function DashboardView() {
                       {p.name}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {p.stock === 0
+                      {p.currentStock === 0
                         ? "Sin stock"
-                        : `Stock bajo · ${p.stock} unidades`}
+                        : `Stock bajo · ${p.currentStock} unidades`}
                     </p>
                   </div>
                 </li>
               ))}
-              <li className="flex items-start gap-3 rounded-lg border border-border/60 bg-surface/60 p-3">
-                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-info" />
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium text-foreground">
-                    Iván Soto sin disponibilidad
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Pausado para nuevas reservas
-                  </p>
-                </div>
-              </li>
             </ul>
           </div>
 

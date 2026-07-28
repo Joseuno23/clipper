@@ -1,4 +1,10 @@
-import { AppointmentSource, QueueStatus } from "../../generated/prisma/enums";
+import {
+  AppointmentSource,
+  AppointmentStatus,
+  QueueStatus,
+  SaleStatus,
+} from "../../generated/prisma/enums";
+import { BUSINESS_TIME_ZONE } from "../../shared/lib/businessLocale";
 import { ApiError } from "../api/errors";
 import { prisma } from "../db/client";
 import { appointmentStatusForQueueStatus } from "../domain/queue/service";
@@ -6,12 +12,19 @@ import type {
   QueuePositionAction,
   QueueRepository,
 } from "../domain/queue/types";
-
-const activeQueueStatuses: QueueStatus[] = [
-  QueueStatus.IN_SERVICE,
-  QueueStatus.CALLED,
-  QueueStatus.WAITING,
-];
+import {
+  activeQueueStatuses,
+  cancelQueueTicket,
+  lockStaffQueue,
+  lockStaffQueues,
+  promoteFirstWaitingTicket,
+  renumberWaitingTickets,
+} from "./queueLifecycle";
+import {
+  createLinkedDraftSale,
+  saleBusinessDateFromInstant,
+  syncDraftSaleServices,
+} from "./saleRepository";
 
 const movableQueueStatuses: QueueStatus[] = [
   QueueStatus.IN_SERVICE,
@@ -24,8 +37,17 @@ const ticketInclude = {
   services: { orderBy: { sortOrder: "asc" as const } },
 };
 
+const appointmentListItemInclude = {
+  ...ticketInclude,
+  staffMember: {
+    select: { displayName: true, firstName: true, lastName: true },
+  },
+};
+
 export const queueRepository: QueueRepository = {
   async listLiveQueues({ barberShopId }) {
+    const now = new Date();
+
     const [staffMembers, tickets] = await Promise.all([
       prisma.staffMember.findMany({
         where: { barberShopId, deletedAt: null, isActive: true },
@@ -46,13 +68,23 @@ export const queueRepository: QueueRepository = {
       prisma.appointment.findMany({
         where: {
           barberShopId,
-          source: AppointmentSource.WALK_IN,
           deletedAt: null,
           staffMemberId: { not: null },
           queueStatus: { in: activeQueueStatuses },
+          OR: [
+            { source: AppointmentSource.WALK_IN },
+            {
+              source: { not: AppointmentSource.WALK_IN },
+              startAt: { lte: now },
+            },
+          ],
         },
         include: ticketInclude,
-        orderBy: [{ queuePosition: "asc" }, { queuedAt: "asc" }],
+        orderBy: [
+          { queuePosition: "asc" },
+          { startAt: "asc" },
+          { queuedAt: "asc" },
+        ],
       }),
     ]);
 
@@ -68,6 +100,18 @@ export const queueRepository: QueueRepository = {
       ...staff,
       tickets: ticketsByStaff.get(staff.id) ?? [],
     }));
+  },
+
+  async listAppointmentsByDate({ barberShopId, from, toExclusive }) {
+    return prisma.appointment.findMany({
+      where: {
+        barberShopId,
+        deletedAt: null,
+        startAt: { gte: from, lt: toExclusive },
+      },
+      include: appointmentListItemInclude,
+      orderBy: [{ startAt: "asc" }, { createdAt: "asc" }],
+    });
   },
 
   async findActiveClient({ barberShopId, clientId }) {
@@ -113,7 +157,13 @@ export const queueRepository: QueueRepository = {
     });
   },
 
-  async createWalkIn({ barberShopId, data, services, queuedAt }) {
+  async createWalkIn({
+    barberShopId,
+    timeZone = BUSINESS_TIME_ZONE,
+    data,
+    services,
+    queuedAt,
+  }) {
     return prisma.$transaction(async (transaction) => {
       await lockStaffQueue(transaction, {
         barberShopId,
@@ -146,7 +196,7 @@ export const queueRepository: QueueRepository = {
         queuedAt.getTime() + totalDurationMinutes * 60 * 1000,
       );
 
-      return transaction.appointment.create({
+      const appointment = await transaction.appointment.create({
         data: {
           barberShopId,
           clientId,
@@ -172,6 +222,90 @@ export const queueRepository: QueueRepository = {
         },
         include: ticketInclude,
       });
+
+      await createLinkedDraftSale(transaction, {
+        barberShopId,
+        appointmentId: appointment.id,
+        clientId,
+        staffMemberId: data.staffMemberId,
+        businessDate: saleBusinessDateFromInstant(timeZone, queuedAt),
+        services,
+      });
+
+      return appointment;
+    });
+  },
+
+  async createScheduledAppointment({
+    barberShopId,
+    timeZone = BUSINESS_TIME_ZONE,
+    data,
+    services,
+    now,
+  }) {
+    return prisma.$transaction(async (transaction) => {
+      await lockStaffQueue(transaction, {
+        barberShopId,
+        staffMemberId: data.staffMemberId,
+      });
+
+      const clientId = await resolveWalkInClientId(transaction, {
+        barberShopId,
+        client: data.client,
+      });
+      const totalDurationMinutes = services.reduce(
+        (total, service) => total + service.durationMinutes,
+        0,
+      );
+      const endAt = new Date(
+        data.startAt.getTime() + totalDurationMinutes * 60 * 1000,
+      );
+
+      await assertStaffAvailableForAppointment(transaction, {
+        barberShopId,
+        staffMemberId: data.staffMemberId,
+        requestedStartAt: data.startAt,
+        requestedEndAt: endAt,
+        now,
+      });
+
+      const appointment = await transaction.appointment.create({
+        data: {
+          barberShopId,
+          clientId,
+          staffMemberId: data.staffMemberId,
+          source: AppointmentSource.PHONE,
+          status: AppointmentStatus.SCHEDULED,
+          queueStatus: QueueStatus.NOT_QUEUED,
+          queuedAt: null,
+          checkedInAt: null,
+          queuePosition: null,
+          startAt: data.startAt,
+          endAt,
+          services: {
+            create: services.map((service, sortOrder) => ({
+              barberShopId,
+              serviceId: service.id,
+              serviceNameSnapshot: service.name,
+              servicePriceSnapshot: service.price.toString(),
+              serviceDurationSnapshot: service.durationMinutes,
+              sortOrder,
+            })),
+          },
+        },
+        include: ticketInclude,
+      });
+
+      await createLinkedDraftSale(transaction, {
+        barberShopId,
+        appointmentId: appointment.id,
+        clientId,
+        staffMemberId: data.staffMemberId,
+        businessDate: saleBusinessDateFromInstant(timeZone, data.startAt),
+        services,
+      });
+
+      return appointment;
     });
   },
 
@@ -181,7 +315,6 @@ export const queueRepository: QueueRepository = {
         where: {
           id: ticketId,
           barberShopId,
-          source: AppointmentSource.WALK_IN,
           deletedAt: null,
         },
         select: {
@@ -283,6 +416,11 @@ export const queueRepository: QueueRepository = {
             sortOrder,
           })),
         });
+        await syncDraftSaleServices(transaction, {
+          barberShopId,
+          appointmentId: ticketId,
+          services,
+        });
       }
 
       const serviceDurationMinutes = services?.reduce(
@@ -367,43 +505,74 @@ export const queueRepository: QueueRepository = {
       return updated;
     });
   },
+
+  async cancelTicket({ barberShopId, ticketId, reason }) {
+    return prisma.$transaction(async (transaction) => {
+      const ticket = await transaction.appointment.findFirst({
+        where: {
+          id: ticketId,
+          barberShopId,
+          deletedAt: null,
+          queueStatus: { in: activeQueueStatuses },
+        },
+        select: { id: true },
+      });
+      if (!ticket) return null;
+
+      const linkedSale = await transaction.sale.findFirst({
+        where: { barberShopId, appointmentId: ticketId, deletedAt: null },
+        select: { id: true, status: true },
+      });
+
+      if (linkedSale) {
+        if (linkedSale.status === SaleStatus.COMPLETED) {
+          throw new ApiError({
+            code: "BAD_REQUEST",
+            message: "Completed sales cannot be cancelled.",
+          });
+        }
+        if (linkedSale.status !== SaleStatus.DRAFT) {
+          throw new ApiError({
+            code: "BAD_REQUEST",
+            message: "Only draft sales can be cancelled.",
+          });
+        }
+        await transaction.sale.update({
+          where: { id: linkedSale.id },
+          data: { status: SaleStatus.CANCELLED, cancellationReason: reason },
+        });
+      }
+
+      await cancelQueueTicket(transaction, {
+        barberShopId,
+        appointmentId: ticketId,
+        reason,
+      });
+
+      return transaction.appointment.findFirst({
+        where: { id: ticketId, barberShopId, deletedAt: null },
+        include: ticketInclude,
+      });
+    });
+  },
 };
 
 type QueuePositionClient = {
   $executeRawUnsafe(query: string, ...values: unknown[]): Promise<unknown>;
   appointment: {
     aggregate(input: {
-      where: {
-        barberShopId: string;
-        staffMemberId: string;
-        source: typeof AppointmentSource.WALK_IN;
-        deletedAt: null;
-        queueStatus: { in: QueueStatus[] };
-      };
+      where: Record<string, unknown>;
       _max: { queuePosition: true };
     }): Promise<{ _max: { queuePosition: number | null } }>;
     count(input: { where: Record<string, unknown> }): Promise<number>;
     findMany(input: {
-      where: {
-        barberShopId: string;
-        staffMemberId: string;
-        source: typeof AppointmentSource.WALK_IN;
-        deletedAt: null;
-        queueStatus: typeof QueueStatus.WAITING;
-        id?: { not: string };
-      };
-      select: { id: true; queuePosition: true; queuedAt: true };
-      orderBy: Array<{ queuePosition: "asc" } | { queuedAt: "asc" }>;
+      where: Record<string, unknown>;
+      select?: Record<string, unknown>;
+      include?: typeof ticketInclude;
+      orderBy?: Array<Record<string, "asc" | "desc">>;
     }): Promise<WaitingTicketPosition[]>;
     findFirst(input: {
-      where: {
-        id?: { not: string };
-        barberShopId: string;
-        staffMemberId: string;
-        source: typeof AppointmentSource.WALK_IN;
-        deletedAt: null;
-        queueStatus: typeof QueueStatus.IN_SERVICE;
-      };
+      where: Record<string, unknown>;
       select: { id: true; queuePosition: true };
     }): Promise<{ id: string; queuePosition: number | null } | null>;
     update(input: {
@@ -466,32 +635,6 @@ async function resolveWalkInClientId(
   return client.id;
 }
 
-async function lockStaffQueue(
-  client: Pick<QueuePositionClient, "$executeRawUnsafe">,
-  input: { barberShopId: string; staffMemberId: string },
-) {
-  await client.$executeRawUnsafe(
-    "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-    `${input.barberShopId}:${input.staffMemberId}:walk-in-queue`,
-  );
-}
-
-async function lockStaffQueues(
-  client: Pick<QueuePositionClient, "$executeRawUnsafe">,
-  input: { barberShopId: string; staffMemberIds: Array<string | null> },
-) {
-  const staffMemberIds = [
-    ...new Set(input.staffMemberIds.filter(Boolean)),
-  ].sort();
-
-  for (const staffMemberId of staffMemberIds) {
-    await lockStaffQueue(client, {
-      barberShopId: input.barberShopId,
-      staffMemberId: staffMemberId!,
-    });
-  }
-}
-
 async function nextQueuePosition(
   client: QueuePositionClient,
   input: { barberShopId: string; staffMemberId: string },
@@ -500,7 +643,6 @@ async function nextQueuePosition(
     where: {
       barberShopId: input.barberShopId,
       staffMemberId: input.staffMemberId,
-      source: AppointmentSource.WALK_IN,
       deletedAt: null,
       queueStatus: { in: activeQueueStatuses },
     },
@@ -508,6 +650,132 @@ async function nextQueuePosition(
   });
 
   return (result._max.queuePosition ?? 0) + 1;
+}
+
+async function assertStaffAvailableForAppointment(
+  client: QueuePositionClient,
+  input: {
+    barberShopId: string;
+    staffMemberId: string;
+    requestedStartAt: Date;
+    requestedEndAt: Date;
+    now: Date;
+  },
+) {
+  const dayStart = startOfUtcDay(input.requestedStartAt);
+  const dayEnd = new Date(dayStart.getTime() + 24 * 60 * 60 * 1000);
+  const records = (await client.appointment.findMany({
+    where: {
+      barberShopId: input.barberShopId,
+      staffMemberId: input.staffMemberId,
+      deletedAt: null,
+      OR: [
+        { queueStatus: { in: activeQueueStatuses } },
+        {
+          status: {
+            in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
+          },
+          startAt: { gte: dayStart, lt: dayEnd },
+        },
+      ],
+    },
+    include: ticketInclude,
+    orderBy: [
+      { queuePosition: "asc" },
+      { startAt: "asc" },
+      { queuedAt: "asc" },
+    ],
+  })) as unknown as AvailabilityAppointment[];
+
+  const intervals = buildAvailabilityIntervals(records, input.now);
+  const conflict = intervals.find((interval) =>
+    intervalsOverlap(
+      input.requestedStartAt,
+      input.requestedEndAt,
+      interval.startAt,
+      interval.endAt,
+    ),
+  );
+
+  if (!conflict) return;
+
+  throw new ApiError({
+    code: "CONFLICT",
+    message: `Staff member is unavailable at the requested time. Estimated free time is ${conflict.endAt.toISOString()}.`,
+  });
+}
+
+type AvailabilityAppointment = {
+  id: string;
+  source: AppointmentSource;
+  queueStatus: QueueStatus;
+  startAt: Date;
+  endAt: Date;
+  services: Array<{ serviceDurationSnapshot: number }>;
+};
+
+function buildAvailabilityIntervals(
+  records: AvailabilityAppointment[],
+  now: Date,
+) {
+  const intervals: Array<{ startAt: Date; endAt: Date }> = [];
+  const activeRecords = records.filter((record) =>
+    isSequentialQueueWorkload(record),
+  );
+  const scheduledRecords = records.filter(
+    (record) => !isSequentialQueueWorkload(record),
+  );
+  let cursor = now;
+
+  for (const record of activeRecords) {
+    const startAt = cursor;
+    const endAt = new Date(
+      startAt.getTime() + durationMinutes(record) * 60_000,
+    );
+    intervals.push({ startAt, endAt });
+    cursor = endAt;
+  }
+
+  for (const record of scheduledRecords) {
+    intervals.push({ startAt: record.startAt, endAt: record.endAt });
+  }
+
+  return intervals;
+}
+
+function isSequentialQueueWorkload(record: AvailabilityAppointment) {
+  return (
+    record.source === AppointmentSource.WALK_IN &&
+    activeQueueStatuses.includes(record.queueStatus)
+  );
+}
+
+function durationMinutes(record: AvailabilityAppointment) {
+  const serviceDuration = record.services.reduce(
+    (total, service) => total + service.serviceDurationSnapshot,
+    0,
+  );
+
+  if (serviceDuration > 0) return serviceDuration;
+  return Math.max(
+    0,
+    Math.round((record.endAt.getTime() - record.startAt.getTime()) / 60_000),
+  );
+}
+
+function intervalsOverlap(
+  leftStart: Date,
+  leftEnd: Date,
+  rightStart: Date,
+  rightEnd: Date,
+) {
+  return leftStart < rightEnd && leftEnd > rightStart;
+}
+
+function startOfUtcDay(date: Date) {
+  return new Date(
+    Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()),
+  );
 }
 
 async function resolveMovedTicketPlacement(
@@ -521,72 +789,6 @@ async function resolveMovedTicketPlacement(
   }
 
   return { queueStatus: QueueStatus.WAITING, queuePosition: nextPosition };
-}
-
-async function renumberWaitingTickets(
-  client: QueuePositionClient,
-  input: {
-    barberShopId: string;
-    staffMemberId: string;
-    movingTicketId: string;
-    action: QueuePositionAction;
-    excludeMovingTicket?: boolean;
-  },
-) {
-  const tickets = await client.appointment.findMany({
-    where: {
-      barberShopId: input.barberShopId,
-      staffMemberId: input.staffMemberId,
-      source: AppointmentSource.WALK_IN,
-      deletedAt: null,
-      queueStatus: QueueStatus.WAITING,
-      ...(input.excludeMovingTicket
-        ? { id: { not: input.movingTicketId } }
-        : {}),
-    },
-    select: { id: true, queuePosition: true, queuedAt: true },
-    orderBy: [{ queuePosition: "asc" }, { queuedAt: "asc" }],
-  });
-  const currentIndex = tickets.findIndex(
-    (ticket) => ticket.id === input.movingTicketId,
-  );
-  const orderedTickets = [...tickets];
-
-  if (!input.excludeMovingTicket && currentIndex === -1) {
-    throw invalidQueueUpdate("Only waiting queue tickets can be reordered.");
-  }
-
-  if (!input.excludeMovingTicket) {
-    const [movingTicket] = orderedTickets.splice(currentIndex, 1);
-    const targetIndex = targetWaitingIndex({
-      action: input.action,
-      currentIndex,
-      lastIndex: orderedTickets.length,
-    });
-
-    orderedTickets.splice(targetIndex, 0, movingTicket);
-  }
-
-  const firstPosition = await firstWaitingQueuePosition(client, {
-    barberShopId: input.barberShopId,
-    staffMemberId: input.staffMemberId,
-  });
-
-  await Promise.all(
-    orderedTickets.map((ticket) =>
-      client.appointment.update({
-        where: { id: ticket.id },
-        data: { queuePosition: null },
-      }),
-    ),
-  );
-
-  for (const [index, ticket] of orderedTickets.entries()) {
-    await client.appointment.update({
-      where: { id: ticket.id },
-      data: { queuePosition: firstPosition + index },
-    });
-  }
 }
 
 async function promoteWaitingTicketToChair(
@@ -603,7 +805,6 @@ async function promoteWaitingTicketToChair(
       id: { not: input.ticketId },
       barberShopId: input.barberShopId,
       staffMemberId: input.staffMemberId,
-      source: AppointmentSource.WALK_IN,
       deletedAt: null,
       queueStatus: QueueStatus.IN_SERVICE,
     },
@@ -655,65 +856,6 @@ async function promoteWaitingTicketToChair(
   return promoted;
 }
 
-async function promoteFirstWaitingTicket(
-  client: QueuePositionClient,
-  input: { barberShopId: string; staffMemberId: string },
-) {
-  const [nextTicket] = await client.appointment.findMany({
-    where: {
-      barberShopId: input.barberShopId,
-      staffMemberId: input.staffMemberId,
-      source: AppointmentSource.WALK_IN,
-      deletedAt: null,
-      queueStatus: QueueStatus.WAITING,
-    },
-    select: { id: true, queuePosition: true, queuedAt: true },
-    orderBy: [{ queuePosition: "asc" }, { queuedAt: "asc" }],
-  });
-
-  if (!nextTicket) return;
-
-  await client.appointment.update({
-    where: { id: nextTicket.id },
-    data: {
-      queueStatus: QueueStatus.IN_SERVICE,
-      status: appointmentStatusForQueueStatus(QueueStatus.IN_SERVICE),
-      queuePosition: 1,
-    },
-  });
-}
-
-async function firstWaitingQueuePosition(
-  client: Pick<QueuePositionClient, "appointment">,
-  input: { barberShopId: string; staffMemberId: string },
-) {
-  const result = await client.appointment.aggregate({
-    where: {
-      barberShopId: input.barberShopId,
-      staffMemberId: input.staffMemberId,
-      source: AppointmentSource.WALK_IN,
-      deletedAt: null,
-      queueStatus: { in: [QueueStatus.IN_SERVICE, QueueStatus.CALLED] },
-    },
-    _max: { queuePosition: true },
-  });
-
-  return (result._max.queuePosition ?? 0) + 1;
-}
-
-function targetWaitingIndex(input: {
-  action: QueuePositionAction;
-  currentIndex: number;
-  lastIndex: number;
-}) {
-  if (input.action === "UP") return Math.max(0, input.currentIndex - 1);
-  if (input.action === "DOWN") {
-    return Math.min(input.lastIndex, input.currentIndex + 1);
-  }
-  if (input.action === "FIRST_WAITING") return 0;
-  return input.lastIndex;
-}
-
 async function assertNoOtherInServiceTicket(
   client: Pick<QueuePositionClient, "appointment">,
   input: { barberShopId: string; staffMemberId: string; ticketId: string },
@@ -723,7 +865,6 @@ async function assertNoOtherInServiceTicket(
       id: { not: input.ticketId },
       barberShopId: input.barberShopId,
       staffMemberId: input.staffMemberId,
-      source: AppointmentSource.WALK_IN,
       deletedAt: null,
       queueStatus: QueueStatus.IN_SERVICE,
     },
@@ -746,7 +887,6 @@ async function assertNoOtherActiveClientTicket(
       ...(input.ticketId ? { id: { not: input.ticketId } } : {}),
       barberShopId: input.barberShopId,
       clientId: input.clientId,
-      source: AppointmentSource.WALK_IN,
       deletedAt: null,
       queueStatus: { in: activeQueueStatuses },
     },

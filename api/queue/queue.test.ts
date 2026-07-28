@@ -14,7 +14,9 @@ const queueRepository = {
   findActiveService: vi.fn(),
   findActiveServices: vi.fn(),
   createWalkIn: vi.fn(),
+  createScheduledAppointment: vi.fn(),
   updateTicket: vi.fn(),
+  cancelTicket: vi.fn(),
 };
 
 vi.mock("../../src/server/api/auth", () => ({
@@ -58,6 +60,9 @@ function createTicket(overrides: Partial<QueueTicketRecord> = {}) {
     clientId: "client_1",
     staffMemberId: "staff_1",
     status: "CHECKED_IN",
+    source: "WALK_IN",
+    startAt: now,
+    endAt: new Date("2026-01-01T12:45:00.000Z"),
     queueStatus: "WAITING",
     queuedAt: now,
     queuePosition: 1,
@@ -143,7 +148,17 @@ describe("queue API handlers", () => {
         activeServices.filter((service) => serviceIds.includes(service.id)),
       );
     queueRepository.createWalkIn.mockReset().mockResolvedValue(createTicket());
+    queueRepository.createScheduledAppointment
+      .mockReset()
+      .mockResolvedValue(createTicket({ source: "PHONE" }));
     queueRepository.updateTicket.mockReset().mockResolvedValue(createTicket());
+    queueRepository.cancelTicket.mockReset().mockResolvedValue(
+      createTicket({
+        status: "CANCELLED",
+        queueStatus: "LEFT",
+        queuePosition: null,
+      }),
+    );
   });
 
   it("lists live queues scoped from auth context", async () => {
@@ -245,6 +260,37 @@ describe("queue API handlers", () => {
             documentNumber: "20-123.456",
             normalizedDocument: "20123456",
           },
+        }),
+      }),
+    );
+  });
+
+  it("creates a scheduled appointment through appointments API", async () => {
+    const { default: handler } = await import("../appointments/index");
+    const response = createResponse();
+
+    await handler(
+      createRequest({
+        method: "POST",
+        body: {
+          clientId: "client_1",
+          serviceIds: ["service_1", "service_2"],
+          staffMemberId: "staff_1",
+          startAt: "2026-01-01T15:00:00.000Z",
+        },
+      }),
+      response,
+    );
+
+    expect(requireAdminCapable).toHaveBeenCalledWith(authContext);
+    expect(queueRepository.createScheduledAppointment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        barberShopId: "shop_1",
+        data: expect.objectContaining({
+          serviceIds: ["service_1", "service_2"],
+          staffMemberId: "staff_1",
+          client: { kind: "existing", clientId: "client_1" },
+          startAt: new Date("2026-01-01T15:00:00.000Z"),
         }),
       }),
     );
@@ -372,5 +418,54 @@ describe("queue API handlers", () => {
       }),
     );
     expect(queueRepository.updateTicket).not.toHaveBeenCalled();
+  });
+
+  it("routes POST /api/queue/:id/cancel and requires a cancellation reason", async () => {
+    const { getApiRoute } = await import("../../vite.config");
+    const apiRoute = getApiRoute("/api/queue/appt_1/cancel");
+
+    expect(apiRoute).toEqual({
+      modulePath: expect.stringContaining("api/queue/[id]/cancel.ts"),
+      params: { id: "appt_1" },
+    });
+
+    const { default: cancelHandler } = await import("./[id]/cancel");
+    const emptyReasonResponse = createResponse();
+
+    await cancelHandler(
+      createRequest({
+        method: "POST",
+        query: apiRoute!.params,
+        body: { reason: "" },
+      }),
+      emptyReasonResponse,
+    );
+
+    expect(emptyReasonResponse.statusCode).toBe(400);
+    expect(queueRepository.cancelTicket).not.toHaveBeenCalled();
+
+    const cancelResponse = createResponse();
+    await cancelHandler(
+      createRequest({
+        method: "POST",
+        query: apiRoute!.params,
+        body: { reason: "Cliente canceló" },
+      }),
+      cancelResponse,
+    );
+
+    expect(queueRepository.cancelTicket).toHaveBeenCalledWith({
+      barberShopId: "shop_1",
+      ticketId: "appt_1",
+      reason: "Cliente canceló",
+    });
+    expect(cancelResponse.body).toEqual({
+      ok: true,
+      data: expect.objectContaining({
+        status: "CANCELLED",
+        queueStatus: "LEFT",
+        queuePosition: null,
+      }),
+    });
   });
 });

@@ -69,7 +69,7 @@ type ApiRoute = {
   params: Record<string, string>;
 };
 
-function getApiRoute(url: string): ApiRoute | null {
+export function getApiRoute(url: string): ApiRoute | null {
   const { pathname } = new URL(url, "http://localhost");
   const relativePath = pathname.replace(/^\/api\//, "");
 
@@ -108,6 +108,20 @@ function getApiRoute(url: string): ApiRoute | null {
 
     return existsSync(dynamicModulePath)
       ? { modulePath: dynamicModulePath, params: { id: segments[1] } }
+      : null;
+  }
+
+  if (segments.length > 2) {
+    const nestedDynamicModulePath = path.resolve(
+      __dirname,
+      "api",
+      segments[0],
+      "[id]",
+      `${segments.slice(2).join("/")}.ts`,
+    );
+
+    return existsSync(nestedDynamicModulePath)
+      ? { modulePath: nestedDynamicModulePath, params: { id: segments[1] } }
       : null;
   }
 

@@ -39,7 +39,12 @@ const catalog: NavItem[] = [
 ];
 
 const insights: NavItem[] = [
-  { label: "Reportes", to: "/reports", icon: BarChart3 },
+  {
+    label: "Liquidación de staff",
+    to: "/reports/staff-liquidations",
+    icon: BarChart3,
+  },
+  { label: "Reporte de ventas", to: "/reports/sales", icon: BarChart3 },
   { label: "Configuración", to: "/settings", icon: Settings },
 ];
 

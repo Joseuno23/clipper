@@ -86,6 +86,20 @@ function formatDateKey(date: ShopLocalDate) {
     .join("-");
 }
 
+function parseDateKey(dateKey: string): ShopLocalDate {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+
+  if (!match) {
+    throw new Error(`Invalid shop date key: ${dateKey}`);
+  }
+
+  return {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+  };
+}
+
 function getTimeZoneOffsetMs(timeZone: string, instant: Date) {
   const parts = getLocalDateTimeParts(timeZone, instant);
   const localAsUtc = Date.UTC(
@@ -142,11 +156,50 @@ export function getShopLocalDateKey(timeZone: string, instant = new Date()) {
   return formatDateKey(getShopLocalDate(timeZone, instant));
 }
 
+export function shopLocalDateKeyToNoonUtc(dateKey: string) {
+  parseDateKey(dateKey);
+
+  return new Date(`${dateKey}T12:00:00.000Z`);
+}
+
+export function shopBusinessDateFromInstant(
+  timeZone: string,
+  instant = new Date(),
+) {
+  return shopLocalDateKeyToNoonUtc(getShopLocalDateKey(timeZone, instant));
+}
+
 export function getShopLocalDayBoundaries(
   timeZone: string,
   instant = new Date(),
 ): ShopDayBoundaries {
   const date = getShopLocalDate(timeZone, instant);
+  const nextDate = addLocalDays(date, 1);
+
+  return {
+    dateKey: formatDateKey(date),
+    startsAt: localDateTimeToUtc(timeZone, {
+      ...date,
+      hour: 0,
+      minute: 0,
+      second: 0,
+    }),
+    endsAt: localDateTimeToUtc(timeZone, {
+      ...nextDate,
+      hour: 0,
+      minute: 0,
+      second: 0,
+    }),
+  };
+}
+
+export function getShopLocalDayBoundariesForDateKey(
+  timeZone: string,
+  dateKey: string,
+): ShopDayBoundaries {
+  assertValidShopTimeZone(timeZone);
+
+  const date = parseDateKey(dateKey);
   const nextDate = addLocalDays(date, 1);
 
   return {

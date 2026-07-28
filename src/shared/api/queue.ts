@@ -12,12 +12,17 @@ export type AppointmentStatus =
   | "CANCELLED"
   | "NO_SHOW";
 
+export type AppointmentSource = "WALK_IN" | "PHONE" | "ONLINE" | "STAFF";
+
 export type QueueTicketDto = {
   id: string;
   clientId: string | null;
   clientName: string;
   staffMemberId: string | null;
   status: AppointmentStatus;
+  source: AppointmentSource;
+  startAt: string;
+  endAt: string;
   queueStatus: QueueStatus;
   queuedAt: string | null;
   queuePosition: number | null;
@@ -92,6 +97,12 @@ export const queueApi = {
   updateTicket: (id: string, input: QueueUpdateInput) =>
     adminRequest<QueueTicketDto>(`${QUEUE_PATH}/${id}`, {
       method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }),
+  cancelTicket: (id: string, input: { reason: string }) =>
+    adminRequest<QueueTicketDto>(`${QUEUE_PATH}/${id}/cancel`, {
+      method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input),
     }),
