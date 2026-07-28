@@ -1,18 +1,33 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { StatusBadge } from "@/shared/components/StatusBadge";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/widgets/data-table/DataTable";
 import {
+  NewAppointmentDialog,
+  NewWalkInDialog,
+} from "@/features/queue/QueueView";
+import { adminCrudKeys, staffApi } from "@/shared/api/adminCrud";
+import {
   appointmentKeys,
   appointmentsApi,
   type AppointmentListItemDto,
 } from "@/shared/api/appointments";
+import { queueApi, queueKeys } from "@/shared/api/queue";
+import { salesKeys } from "@/shared/api/sales";
 import { businessDateInputValue } from "@/shared/lib/businessLocale";
 import { time, initials } from "@/shared/lib/format";
-import { Calendar, Filter, Plus, MoreHorizontal } from "lucide-react";
+import {
+  Calendar,
+  CalendarClock,
+  Filter,
+  Plus,
+  MoreHorizontal,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
+
+const PAGE_SIZE = 100;
 
 const TONE = {
   SCHEDULED: "neutral",
@@ -54,15 +69,59 @@ const SOURCE_LABEL = {
 const AVATAR_COLORS = ["#7c3aed", "#0f766e", "#c2410c", "#be123c"];
 
 export function AppointmentsView() {
+  const queryClient = useQueryClient();
   const [tab, setTab] = useState<(typeof TABS)[number]["key"]>("all");
   const [selectedDate, setSelectedDate] = useState(() =>
     businessDateInputValue(),
   );
   const [showFilters, setShowFilters] = useState(false);
+  const [isWalkInDialogOpen, setIsWalkInDialogOpen] = useState(false);
+  const [isAppointmentDialogOpen, setIsAppointmentDialogOpen] = useState(false);
+  const [walkInError, setWalkInError] = useState<string | null>(null);
+  const [appointmentError, setAppointmentError] = useState<string | null>(null);
 
   const appointmentsQuery = useQuery({
     queryKey: appointmentKeys.listByDate(selectedDate),
     queryFn: () => appointmentsApi.listByDate(selectedDate),
+  });
+  const staffQuery = useQuery({
+    queryKey: adminCrudKeys.staffList({ limit: PAGE_SIZE, offset: 0 }),
+    queryFn: () => staffApi.list({ limit: PAGE_SIZE, offset: 0 }),
+  });
+
+  const refreshQueue = () =>
+    queryClient.invalidateQueries({ queryKey: queueKeys.live });
+  const refreshSales = () =>
+    queryClient.invalidateQueries({ queryKey: salesKeys.all });
+  const refreshAppointments = () =>
+    queryClient.invalidateQueries({ queryKey: appointmentKeys.all });
+
+  const createWalkInMutation = useMutation({
+    mutationFn: queueApi.createWalkIn,
+    onSuccess: async () => {
+      setIsWalkInDialogOpen(false);
+      setWalkInError(null);
+      await Promise.all([
+        refreshQueue(),
+        refreshSales(),
+        refreshAppointments(),
+      ]);
+    },
+    onError: (error) => setWalkInError(errorMessage(error)),
+  });
+
+  const createAppointmentMutation = useMutation({
+    mutationFn: appointmentsApi.createScheduled,
+    onSuccess: async () => {
+      setIsAppointmentDialogOpen(false);
+      setAppointmentError(null);
+      await Promise.all([
+        refreshQueue(),
+        refreshSales(),
+        refreshAppointments(),
+      ]);
+    },
+    onError: (error) => setAppointmentError(errorMessage(error)),
   });
 
   const appointments = appointmentsQuery.data ?? [];
@@ -170,10 +229,10 @@ export function AppointmentsView() {
     <>
       <PageHeader
         eyebrow="Operación"
-        title="Citas"
-        description="Agenda del día, próximas reservas, check-in y reasignación."
+        title="Agenda"
+        description="Próximas reservas, check-in y reasignación."
         actions={
-          <>
+          <div className="flex gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -191,10 +250,28 @@ export function AppointmentsView() {
             >
               <Filter className="h-4 w-4" /> Filtros
             </Button>
-            <Button size="sm" className="gap-1.5">
-              <Plus className="h-4 w-4" /> Nueva cita
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => {
+                setAppointmentError(null);
+                setIsAppointmentDialogOpen(true);
+              }}
+            >
+              <CalendarClock className="h-4 w-4" /> Nueva cita
             </Button>
-          </>
+            <Button
+              size="sm"
+              className="gap-1.5"
+              onClick={() => {
+                setWalkInError(null);
+                setIsWalkInDialogOpen(true);
+              }}
+            >
+              <Plus className="h-4 w-4" /> Nuevo turno
+            </Button>
+          </div>
         }
       />
 
@@ -273,8 +350,33 @@ export function AppointmentsView() {
           }
         />
       )}
+
+      <NewWalkInDialog
+        open={isWalkInDialogOpen}
+        staff={staffQuery.data ?? []}
+        error={walkInError}
+        isSubmitting={createWalkInMutation.isPending}
+        isLoading={staffQuery.isLoading}
+        onOpenChange={setIsWalkInDialogOpen}
+        onSubmit={(input) => createWalkInMutation.mutate(input)}
+      />
+      <NewAppointmentDialog
+        open={isAppointmentDialogOpen}
+        staff={staffQuery.data ?? []}
+        error={appointmentError}
+        isSubmitting={createAppointmentMutation.isPending}
+        isLoading={staffQuery.isLoading}
+        onOpenChange={setIsAppointmentDialogOpen}
+        onSubmit={(input) => createAppointmentMutation.mutate(input)}
+      />
     </>
   );
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error
+    ? error.message
+    : "No se pudo completar la operación.";
 }
 
 function appointmentTab(appointment: AppointmentListItemDto) {

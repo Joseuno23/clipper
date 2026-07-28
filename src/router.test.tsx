@@ -59,7 +59,7 @@ describe("React Router route behavior", () => {
   );
 
   it.each([
-    ["/appointments", "Citas"],
+    ["/appointments", "Agenda"],
     ["/queue", "Colas en vivo"],
     ["/queue/display", "Colas en vivo"],
     ["/sales", "Caja"],

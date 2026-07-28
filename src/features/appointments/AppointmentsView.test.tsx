@@ -11,8 +11,20 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AppointmentListItemDto } from "@/shared/api/appointments";
 
-const { appointmentsListByDate } = vi.hoisted(() => ({
+const {
+  appointmentsCreateScheduled,
+  appointmentsListByDate,
+  customersList,
+  queueCreateWalkIn,
+  servicesList,
+  staffList,
+} = vi.hoisted(() => ({
+  appointmentsCreateScheduled: vi.fn(),
   appointmentsListByDate: vi.fn(),
+  customersList: vi.fn(),
+  queueCreateWalkIn: vi.fn(),
+  servicesList: vi.fn(),
+  staffList: vi.fn(),
 }));
 
 vi.mock("@/shared/api/appointments", () => ({
@@ -20,7 +32,36 @@ vi.mock("@/shared/api/appointments", () => ({
     all: ["appointments"],
     listByDate: (date: string) => ["appointments", "date", date],
   },
-  appointmentsApi: { listByDate: appointmentsListByDate },
+  appointmentsApi: {
+    createScheduled: appointmentsCreateScheduled,
+    listByDate: appointmentsListByDate,
+  },
+}));
+
+vi.mock("@/shared/api/adminCrud", () => ({
+  AdminCrudApiError: class AdminCrudApiError extends Error {},
+  adminCrudKeys: {
+    customersList: (params: unknown) => ["customers", "list", params],
+    servicesList: (params: unknown) => ["services", "list", params],
+    staffList: (params: unknown) => ["staff", "list", params],
+  },
+  customersApi: { list: customersList },
+  servicesApi: { list: servicesList },
+  staffApi: { list: staffList },
+}));
+
+vi.mock("@/shared/api/queue", () => ({
+  queueKeys: { live: ["queue", "live"] },
+  queueApi: {
+    createWalkIn: queueCreateWalkIn,
+    live: vi.fn(),
+    updateTicket: vi.fn(),
+    cancelTicket: vi.fn(),
+  },
+}));
+
+vi.mock("@/shared/api/sales", () => ({
+  salesKeys: { all: ["sales"] },
 }));
 
 import { AppointmentsView } from "./AppointmentsView";
@@ -32,6 +73,32 @@ afterEach(() => {
 });
 
 describe("AppointmentsView", () => {
+  it("opens the walk-in dialog from Nuevo turno", async () => {
+    appointmentsListByDate.mockResolvedValue([]);
+    staffList.mockResolvedValue([makeStaff()]);
+
+    renderAppointmentsView();
+
+    await userEvent.click(screen.getByRole("button", { name: "Nuevo turno" }));
+
+    expect(
+      await screen.findByRole("dialog", { name: "Nuevo turno walk-in" }),
+    ).toBeInTheDocument();
+  });
+
+  it("opens the scheduled appointment dialog from Nueva cita", async () => {
+    appointmentsListByDate.mockResolvedValue([]);
+    staffList.mockResolvedValue([makeStaff()]);
+
+    renderAppointmentsView();
+
+    await userEvent.click(screen.getByRole("button", { name: "Nueva cita" }));
+
+    expect(
+      await screen.findByRole("dialog", { name: "Nueva cita" }),
+    ).toBeInTheDocument();
+  });
+
   it("loads appointments from the API for today's business date", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.setSystemTime(new Date(2026, 0, 15, 12, 0));
@@ -176,5 +243,22 @@ function makeAppointment(
       },
     ],
     ...overrides,
+  };
+}
+
+function makeStaff() {
+  return {
+    id: "staff_1",
+    userId: "user_1",
+    firstName: "Ana",
+    lastName: "Barber",
+    displayName: "Ana Barber",
+    email: "ana@example.com",
+    phone: null,
+    roles: ["BARBER"],
+    specialties: [],
+    active: true,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
   };
 }

@@ -25,7 +25,7 @@ interface NavItem {
 
 const primary: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
-  { label: "Citas", to: "/appointments", icon: Calendar, badge: "7" },
+  { label: "Agenda", to: "/appointments", icon: Calendar, badge: "7" },
   { label: "Cola", to: "/queue", icon: ListOrdered, badge: "3", end: true },
   { label: "Vista TV", to: "/queue/display", icon: Monitor },
   { label: "Caja", to: "/sales", icon: Wallet },

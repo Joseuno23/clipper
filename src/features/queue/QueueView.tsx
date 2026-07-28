@@ -731,7 +731,11 @@ export function QueueView() {
     onSuccess: async () => {
       setIsDialogOpen(false);
       setFormError(null);
-      await refreshQueue();
+      await Promise.all([
+        refreshQueue(),
+        refreshSales(),
+        refreshAppointments(),
+      ]);
     },
     onError: (error) => setFormError(errorMessage(error)),
   });
@@ -1197,7 +1201,7 @@ function EditQueueTicketDialog({
   );
 }
 
-function NewWalkInDialog({
+export function NewWalkInDialog({
   open,
   staff,
   error,
@@ -1447,7 +1451,7 @@ function NewWalkInDialog({
   );
 }
 
-function NewAppointmentDialog({
+export function NewAppointmentDialog({
   open,
   staff,
   error,
