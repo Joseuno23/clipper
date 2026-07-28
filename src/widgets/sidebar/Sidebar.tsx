@@ -16,6 +16,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { authKeys, me } from "@/shared/api/auth";
+import { appointmentKeys, appointmentsApi } from "@/shared/api/appointments";
+import { businessDateInputValue } from "@/shared/lib/businessLocale";
+import { queueApi, queueKeys } from "@/shared/api/queue";
 import { UserAccountMenu } from "@/widgets/user-menu/UserAccountMenu";
 
 interface NavItem {
@@ -28,8 +31,8 @@ interface NavItem {
 
 const primary: NavItem[] = [
   { label: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
-  { label: "Agenda", to: "/appointments", icon: Calendar, badge: "7" },
-  { label: "Cola", to: "/queue", icon: ListOrdered, badge: "3", end: true },
+  { label: "Agenda", to: "/appointments", icon: Calendar },
+  { label: "Cola", to: "/queue", icon: ListOrdered, end: true },
   { label: "Vista TV", to: "/queue/display", icon: Monitor },
   { label: "Caja", to: "/sales", icon: Wallet },
 ];
@@ -113,8 +116,40 @@ function NavGroup({
 
 export function Sidebar() {
   const { pathname } = useLocation();
+  const today = businessDateInputValue();
   const authQuery = useQuery({ queryKey: authKeys.me, queryFn: me });
+  const appointmentsQuery = useQuery({
+    queryKey: appointmentKeys.listByDate(today),
+    queryFn: () => appointmentsApi.listByDate(today),
+  });
+  const queueQuery = useQuery({
+    queryKey: queueKeys.live,
+    queryFn: queueApi.live,
+  });
   const shopName = authQuery.data?.tenant.name ?? "Barbería";
+  const activeQueueCount = (queueQuery.data?.queues ?? []).reduce(
+    (total, staffQueue) => total + staffQueue.totalActiveCount,
+    0,
+  );
+  const primaryItems = primary.map((item) => {
+    if (item.to === "/appointments") {
+      return {
+        ...item,
+        badge: appointmentsQuery.data?.length
+          ? String(appointmentsQuery.data.length)
+          : undefined,
+      };
+    }
+
+    if (item.to === "/queue") {
+      return {
+        ...item,
+        badge: activeQueueCount ? String(activeQueueCount) : undefined,
+      };
+    }
+
+    return item;
+  });
 
   return (
     <aside className="hidden h-screen w-[244px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar lg:flex">
@@ -131,7 +166,11 @@ export function Sidebar() {
       </div>
 
       <nav className="flex-1 space-y-6 overflow-y-auto px-3 py-5">
-        <NavGroup label="Operación" items={primary} activePath={pathname} />
+        <NavGroup
+          label="Operación"
+          items={primaryItems}
+          activePath={pathname}
+        />
         <NavGroup label="Catálogo" items={catalog} activePath={pathname} />
         <NavGroup label="Negocio" items={insights} activePath={pathname} />
       </nav>
