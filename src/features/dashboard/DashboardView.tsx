@@ -1,3 +1,4 @@
+import { useMemo, useState } from "react";
 import {
   Calendar,
   Wallet,
@@ -8,11 +9,18 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
+import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from "recharts";
 
 import { MetricCard } from "@/widgets/metrics/MetricCard";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { StatusBadge } from "@/shared/components/StatusBadge";
 import { Button } from "@/components/ui/button";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/components/ui/chart";
 import { adminCrudKeys, productsApi } from "@/shared/api/adminCrud";
 import { authKeys, me } from "@/shared/api/auth";
 import { appointmentKeys, appointmentsApi } from "@/shared/api/appointments";
@@ -20,7 +28,7 @@ import { queueApi, queueKeys } from "@/shared/api/queue";
 import { reportKeys, reportsApi } from "@/shared/api/reports";
 import { salesApi, salesKeys } from "@/shared/api/sales";
 import { businessDateInputValue } from "@/shared/lib/businessLocale";
-import { currency, time, initials } from "@/shared/lib/format";
+import { currency, compactNumber, time, initials } from "@/shared/lib/format";
 import { cn } from "@/lib/utils";
 
 const STATUS_TONE = {
@@ -44,6 +52,55 @@ const STATUS_LABEL = {
 } as const;
 
 const AVATAR_COLORS = ["#7c3aed", "#0f766e", "#c2410c", "#be123c"];
+
+type SalesRange = "last7" | "month" | "year";
+
+const SALES_RANGE_OPTIONS: { value: SalesRange; label: string }[] = [
+  { value: "last7", label: "Últimos 7 días" },
+  { value: "month", label: "Mes" },
+  { value: "year", label: "Año" },
+];
+
+const salesChartConfig = {
+  totalRevenue: {
+    label: "Ventas",
+    // Uses the app's primary token so it stays legible in dark and light.
+    theme: { light: "hsl(262 83% 58%)", dark: "hsl(263 70% 65%)" },
+  },
+} satisfies ChartConfig;
+
+/**
+ * Builds the reports date range for the selected preset. The upper bound is
+ * always today so we never query future dates: the month/year presets start at
+ * the current period boundary but stop at today (partial current period).
+ */
+function salesRangeFor(range: SalesRange, today: Date) {
+  const to = businessDateInputValue(today);
+
+  if (range === "month") {
+    const start = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { from: businessDateInputValue(start), to };
+  }
+
+  if (range === "year") {
+    const start = new Date(today.getFullYear(), 0, 1);
+    return { from: businessDateInputValue(start), to };
+  }
+
+  const start = new Date(today);
+  start.setDate(start.getDate() - 6);
+  return { from: businessDateInputValue(start), to };
+}
+
+const salesAxisDate = new Intl.DateTimeFormat("es-CO", {
+  timeZone: "UTC",
+  day: "numeric",
+  month: "short",
+});
+
+function salesDayLabel(dateKey: string) {
+  return salesAxisDate.format(new Date(`${dateKey}T12:00:00.000Z`));
+}
 
 export function DashboardView() {
   const today = new Date();
@@ -70,6 +127,24 @@ export function DashboardView() {
     queryFn: () => productsApi.list({ limit: 100, offset: 0 }),
   });
   const authQuery = useQuery({ queryKey: authKeys.me, queryFn: me });
+
+  const [salesRange, setSalesRange] = useState<SalesRange>("last7");
+  const salesRangeParams = useMemo(
+    () => salesRangeFor(salesRange, today),
+    // `today` is recreated each render; the range only depends on its calendar
+    // value plus the selected preset, so key on the resolved date string.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [salesRange, todayKey],
+  );
+  const salesByDayQuery = useQuery({
+    queryKey: reportKeys.sales(salesRangeParams),
+    queryFn: () => reportsApi.sales(salesRangeParams),
+  });
+  const salesChartData = (salesByDayQuery.data?.days ?? []).map((day) => ({
+    date: day.date,
+    label: salesDayLabel(day.date),
+    totalRevenue: Number(day.totalRevenue),
+  }));
 
   const todays = appointmentsQuery.data ?? [];
   const openSales = openSalesQuery.data ?? [];
@@ -165,6 +240,97 @@ export function DashboardView() {
           }
           icon={<Users className="h-4 w-4" />}
         />
+      </section>
+
+      <section className="rounded-xl border border-border bg-card">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-3.5">
+          <div>
+            <h2 className="font-display text-sm font-semibold text-foreground">
+              Ventas por día
+            </h2>
+            <p className="text-xs text-muted-foreground">
+              {salesByDayQuery.isError
+                ? "No se pudo cargar el reporte"
+                : `${salesRangeParams.from} — ${salesRangeParams.to}`}
+            </p>
+          </div>
+          <div
+            role="group"
+            aria-label="Rango de ventas por día"
+            className="inline-flex rounded-lg border border-border bg-surface/60 p-0.5"
+          >
+            {SALES_RANGE_OPTIONS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                aria-pressed={salesRange === option.value}
+                onClick={() => setSalesRange(option.value)}
+                className={cn(
+                  "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+                  salesRange === option.value
+                    ? "bg-primary text-primary-foreground"
+                    : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="p-5">
+          {salesByDayQuery.isLoading ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              Cargando ventas…
+            </p>
+          ) : salesByDayQuery.isError ? (
+            <p className="py-10 text-center text-sm text-destructive">
+              No se pudieron cargar las ventas por día.
+            </p>
+          ) : salesChartData.length === 0 ? (
+            <p className="py-10 text-center text-sm text-muted-foreground">
+              No hay ventas para el rango seleccionado.
+            </p>
+          ) : (
+            <ChartContainer
+              config={salesChartConfig}
+              className="aspect-auto h-[260px] w-full"
+            >
+              <BarChart accessibilityLayer data={salesChartData}>
+                <CartesianGrid vertical={false} />
+                <XAxis
+                  dataKey="label"
+                  tickLine={false}
+                  axisLine={false}
+                  tickMargin={8}
+                  minTickGap={16}
+                />
+                <YAxis
+                  tickLine={false}
+                  axisLine={false}
+                  width={48}
+                  tickFormatter={(value: number) => compactNumber(value)}
+                />
+                <ChartTooltip
+                  content={
+                    <ChartTooltipContent
+                      labelKey="label"
+                      formatter={(value) => (
+                        <span className="font-mono font-medium tabular-nums text-foreground">
+                          {currency(Number(value))}
+                        </span>
+                      )}
+                    />
+                  }
+                />
+                <Bar
+                  dataKey="totalRevenue"
+                  fill="var(--color-totalRevenue)"
+                  radius={[4, 4, 0, 0]}
+                />
+              </BarChart>
+            </ChartContainer>
+          )}
+        </div>
       </section>
 
       <section className="grid gap-5 xl:grid-cols-3">

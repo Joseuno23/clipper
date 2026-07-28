@@ -1,5 +1,7 @@
+import type React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -57,6 +59,39 @@ vi.mock("@/shared/api/adminCrud", () => ({
   },
   productsApi: { list: productsList },
 }));
+
+// Recharts' ResponsiveContainer renders with zero size in jsdom, so we stub the
+// pieces used by the sales chart to render the underlying data as testable DOM.
+vi.mock("recharts", () => {
+  const Passthrough = ({ children }: { children?: React.ReactNode }) => (
+    <div>{children}</div>
+  );
+  return {
+    ResponsiveContainer: Passthrough,
+    CartesianGrid: () => null,
+    XAxis: () => null,
+    YAxis: () => null,
+    Tooltip: () => null,
+    Legend: () => null,
+    BarChart: ({
+      data,
+      children,
+    }: {
+      data: { label: string; totalRevenue: number }[];
+      children?: React.ReactNode;
+    }) => (
+      <div data-testid="sales-bar-chart">
+        {children}
+        {data.map((point) => (
+          <div key={point.label} data-testid="sales-bar">
+            {point.label}: {point.totalRevenue}
+          </div>
+        ))}
+      </div>
+    ),
+    Bar: () => null,
+  };
+});
 
 vi.mock("@/shared/api/auth", () => ({
   authKeys: { me: ["auth", "me"] },
@@ -185,5 +220,101 @@ describe("DashboardView", () => {
       "href",
       "/queue",
     );
+    expect(
+      screen.getByText("No hay ventas para el rango seleccionado."),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the sales-by-day chart from report days and queries last 7 days by default", async () => {
+    stubSupportingQueries();
+    reportsSales.mockResolvedValue({
+      summary: {
+        totalRevenue: "300.00",
+        servicesRevenue: "0",
+        productsRevenue: "0",
+        orderCount: 0,
+        itemLineCount: 0,
+        quantityTotal: 0,
+      },
+      days: [
+        { date: "2026-07-27", totalRevenue: "100.00", items: [] },
+        { date: "2026-07-28", totalRevenue: "200.00", items: [] },
+      ],
+    });
+
+    renderDashboard();
+
+    expect(await screen.findByText("Ventas por día")).toBeInTheDocument();
+    const bars = await screen.findAllByTestId("sales-bar");
+    expect(bars).toHaveLength(2);
+    expect(bars[0]).toHaveTextContent("27 de jul: 100");
+    expect(bars[1]).toHaveTextContent("28 de jul: 200");
+
+    // Default preset is "last 7 days": today minus 6 days through today.
+    const today = new Date();
+    const from = new Date(today);
+    from.setDate(from.getDate() - 6);
+    const key = (d: Date) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Bogota",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(d);
+
+    expect(reportsSales).toHaveBeenCalledWith(
+      expect.objectContaining({ from: key(from), to: key(today) }),
+    );
+  });
+
+  it("changes the reports query range when a filter is selected", async () => {
+    stubSupportingQueries();
+    reportsSales.mockResolvedValue({
+      summary: {
+        totalRevenue: "0",
+        servicesRevenue: "0",
+        productsRevenue: "0",
+        orderCount: 0,
+        itemLineCount: 0,
+        quantityTotal: 0,
+      },
+      days: [],
+    });
+
+    renderDashboard();
+
+    await screen.findByText("Ventas por día");
+
+    const key = (d: Date) =>
+      new Intl.DateTimeFormat("en-CA", {
+        timeZone: "America/Bogota",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).format(d);
+    const today = new Date();
+
+    await userEvent.click(screen.getByRole("button", { name: "Mes" }));
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    await waitFor(() => {
+      expect(reportsSales).toHaveBeenCalledWith(
+        expect.objectContaining({ from: key(monthStart), to: key(today) }),
+      );
+    });
+
+    await userEvent.click(screen.getByRole("button", { name: "Año" }));
+    const yearStart = new Date(today.getFullYear(), 0, 1);
+    await waitFor(() => {
+      expect(reportsSales).toHaveBeenCalledWith(
+        expect.objectContaining({ from: key(yearStart), to: key(today) }),
+      );
+    });
   });
 });
+
+function stubSupportingQueries() {
+  appointmentsListByDate.mockResolvedValue([]);
+  queueLive.mockResolvedValue({ queues: [] });
+  salesList.mockResolvedValue([]);
+  productsList.mockResolvedValue([]);
+}
