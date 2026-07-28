@@ -43,6 +43,7 @@ export type QueueTicketServiceDto = {
 export type StaffQueueDto = {
   staffId: string;
   staffName: string;
+  staffPhotoDataUrl: string | null;
   roles: string[];
   specialties: string[];
   inServiceCount: number;

@@ -70,6 +70,7 @@ function createRepository(): QueueRepository {
         displayName: "Mora",
         firstName: "Mora",
         lastName: "Paz",
+        photoDataUrl: "data:image/png;base64,aGVsbG8=",
         roles: [{ role: "BARBER" as const }],
         specialties: ["Fade"],
         tickets: [
@@ -149,6 +150,7 @@ describe("queue service", () => {
     expect(result.queues[0]).toEqual(
       expect.objectContaining({
         staffId: "staff_1",
+        staffPhotoDataUrl: "data:image/png;base64,aGVsbG8=",
         inServiceCount: 1,
         waitingCount: 1,
         totalActiveCount: 2,

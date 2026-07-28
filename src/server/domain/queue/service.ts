@@ -203,6 +203,7 @@ function toStaffQueueDto(record: QueueStaffRecord) {
   return {
     staffId: record.id,
     staffName: record.displayName || `${record.firstName} ${record.lastName}`,
+    staffPhotoDataUrl: record.photoDataUrl,
     roles: record.roles.map(({ role }) => role),
     specialties: record.specialties,
     inServiceCount: tickets.filter(

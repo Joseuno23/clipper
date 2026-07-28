@@ -101,6 +101,37 @@ function initials(name: string) {
     .toUpperCase();
 }
 
+function StaffAvatar({
+  name,
+  photoDataUrl,
+  size = "md",
+}: {
+  name: string;
+  photoDataUrl: string | null;
+  size?: "md" | "lg";
+}) {
+  const sizeClass = size === "lg" ? "h-16 w-16 text-lg" : "h-14 w-14 text-sm";
+
+  return (
+    <div
+      className={cn(
+        "flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-primary font-display font-semibold text-primary-foreground ring-2 ring-border",
+        sizeClass,
+      )}
+    >
+      {photoDataUrl ? (
+        <img
+          src={photoDataUrl}
+          alt={`Foto de ${name}`}
+          className="h-full w-full object-cover"
+        />
+      ) : (
+        initials(name)
+      )}
+    </div>
+  );
+}
+
 function buildQueueEstimates(queue: StaffQueueDto, now: Date) {
   const estimates = new Map<string, QueueTicketEstimate>();
   let cursor = now.getTime();
@@ -544,9 +575,11 @@ function PublicQueueRow({ queue }: { queue: StaffQueueDto }) {
     <section className="rounded-3xl border border-border bg-card p-6 shadow-sm">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-4">
-          <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary font-display text-lg font-semibold text-primary-foreground ring-2 ring-border">
-            {initials(queue.staffName)}
-          </div>
+          <StaffAvatar
+            name={queue.staffName}
+            photoDataUrl={queue.staffPhotoDataUrl}
+            size="lg"
+          />
           <div>
             <h2 className="font-display text-2xl font-semibold text-foreground">
               {queue.staffName}
@@ -623,9 +656,10 @@ function QueueRow({
       <div className="space-y-5">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
           <div className="flex items-center gap-4">
-            <div className="flex h-14 w-14 items-center justify-center rounded-full bg-primary text-sm font-semibold text-primary-foreground ring-2 ring-border">
-              {initials(queue.staffName)}
-            </div>
+            <StaffAvatar
+              name={queue.staffName}
+              photoDataUrl={queue.staffPhotoDataUrl}
+            />
             <div className="min-w-0">
               <p className="font-display text-base font-semibold text-foreground">
                 {queue.staffName}

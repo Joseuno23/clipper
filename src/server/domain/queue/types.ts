@@ -45,6 +45,7 @@ export type QueueStaffRecord = {
   displayName: string;
   firstName: string;
   lastName: string;
+  photoDataUrl: string | null;
   roles: { role: StaffRole }[];
   specialties: string[];
   tickets: QueueTicketRecord[];
@@ -123,6 +124,7 @@ export type AppointmentListItemDto = QueueTicketDto & {
 export type StaffQueueDto = {
   staffId: string;
   staffName: string;
+  staffPhotoDataUrl: string | null;
   roles: StaffRole[];
   specialties: string[];
   inServiceCount: number;

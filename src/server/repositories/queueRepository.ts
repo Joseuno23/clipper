@@ -60,6 +60,7 @@ export const queueRepository: QueueRepository = {
           displayName: true,
           firstName: true,
           lastName: true,
+          photoDataUrl: true,
           roles: { orderBy: { role: "asc" }, select: { role: true } },
           specialties: true,
         },

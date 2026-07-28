@@ -126,6 +126,30 @@ afterEach(() => {
 });
 
 describe("QueueView new walk-in client search", () => {
+  it("renders staff photos in live queues with initials as fallback", async () => {
+    const photoDataUrl = "data:image/png;base64,aGVsbG8=";
+    stubQueueFetch({
+      queue: makeLiveQueue({ staffPhotoDataUrl: photoDataUrl }),
+    });
+
+    renderQueueView();
+
+    expect(await screen.findByAltText("Foto de Ana Barber")).toHaveAttribute(
+      "src",
+      photoDataUrl,
+    );
+    expect(screen.queryByText("AB")).not.toBeInTheDocument();
+  });
+
+  it("falls back to staff initials in live queues when no photo is present", async () => {
+    stubQueueFetch({ queue: makeLiveQueue({ staffPhotoDataUrl: null }) });
+
+    renderQueueView();
+
+    expect(await screen.findByText("AB")).toBeInTheDocument();
+    expect(screen.queryByAltText("Foto de Ana Barber")).not.toBeInTheDocument();
+  });
+
   it("does not render every service by default", async () => {
     const fetchMock = stubQueueFetch({
       services: [
@@ -852,6 +876,20 @@ describe("QueueView queue time estimates", () => {
 });
 
 describe("QueueDisplayView", () => {
+  it("renders staff photos in public queue rows", async () => {
+    const photoDataUrl = "data:image/png;base64,aGVsbG8=";
+    stubQueueFetch({
+      queue: makeLiveQueue({ staffPhotoDataUrl: photoDataUrl }),
+    });
+
+    renderQueueDisplayView();
+
+    expect(await screen.findByAltText("Foto de Ana Barber")).toHaveAttribute(
+      "src",
+      photoDataUrl,
+    );
+  });
+
   it("renders staff queues with names and positions without admin controls", async () => {
     stubQueueFetch({
       queue: makeLiveQueue({
@@ -1268,14 +1306,17 @@ function makeQueueTicket(
 
 function makeLiveQueue({
   tickets = [],
+  staffPhotoDataUrl = null,
 }: {
   tickets?: QueueTicketDto[];
+  staffPhotoDataUrl?: string | null;
 } = {}): LiveQueuesDto {
   return {
     queues: [
       {
         staffId: "staff_1",
         staffName: "Ana Barber",
+        staffPhotoDataUrl,
         roles: ["BARBER"],
         specialties: [],
         inServiceCount: tickets.filter(
