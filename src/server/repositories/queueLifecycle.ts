@@ -1,4 +1,4 @@
-import { QueueStatus } from "../../generated/prisma/enums";
+import { AppointmentStatus, QueueStatus } from "../../generated/prisma/enums";
 import { ApiError } from "../api/errors";
 import { appointmentStatusForQueueStatus } from "../domain/queue/service";
 import type { QueuePositionAction } from "../domain/queue/types";
@@ -7,6 +7,12 @@ export const activeQueueStatuses: QueueStatus[] = [
   QueueStatus.IN_SERVICE,
   QueueStatus.CALLED,
   QueueStatus.WAITING,
+];
+
+const pendingAppointmentStatuses: AppointmentStatus[] = [
+  AppointmentStatus.SCHEDULED,
+  AppointmentStatus.CONFIRMED,
+  AppointmentStatus.CHECKED_IN,
 ];
 
 type QueueLifecycleClient = {
@@ -64,7 +70,13 @@ export async function completePaidSaleQueueTicket(
       id: input.appointmentId,
       barberShopId: input.barberShopId,
       deletedAt: null,
-      queueStatus: { in: activeQueueStatuses },
+      OR: [
+        { queueStatus: { in: activeQueueStatuses } },
+        {
+          queueStatus: QueueStatus.NOT_QUEUED,
+          status: { in: pendingAppointmentStatuses },
+        },
+      ],
     },
     select: {
       id: true,
@@ -80,6 +92,18 @@ export async function completePaidSaleQueueTicket(
   } | null;
 
   if (!ticket) return;
+
+  if (ticket.queueStatus === QueueStatus.NOT_QUEUED) {
+    await client.appointment.update({
+      where: { id: ticket.id },
+      data: {
+        queueStatus: QueueStatus.SERVED,
+        status: appointmentStatusForQueueStatus(QueueStatus.SERVED),
+        queuePosition: null,
+      },
+    });
+    return;
+  }
 
   if (ticket.staffMemberId) {
     await lockStaffQueue(client, {

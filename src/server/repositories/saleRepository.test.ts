@@ -451,6 +451,71 @@ describe("saleRepository", () => {
     });
   });
 
+  it("completes a linked scheduled NOT_QUEUED appointment without queue promotion", async () => {
+    prisma.sale.findFirst.mockResolvedValueOnce(
+      sale({
+        appointmentId: "appt_1",
+        staffMemberId: "staff_1",
+        items: [{ id: "item_1" }],
+      }),
+    );
+    prisma.saleItem.findMany.mockResolvedValueOnce([
+      {
+        quantity: 1,
+        unitPrice: decimal("20000.00"),
+        discountAmount: decimal("0.00"),
+      },
+    ]);
+    prisma.sale.findFirstOrThrow
+      .mockResolvedValueOnce(sale({ total: decimal("20000.00") }))
+      .mockResolvedValueOnce(sale({ appointmentId: "appt_1" }));
+    prisma.appointment.findFirst.mockResolvedValueOnce({
+      id: "appt_1",
+      staffMemberId: "staff_1",
+      queueStatus: "NOT_QUEUED",
+      queuePosition: null,
+    });
+
+    await saleRepository.complete({
+      barberShopId: "shop_1",
+      saleId: "sale_1",
+      method: PaymentMethod.TRANSFER,
+      reference: null,
+      paidAt: now,
+    });
+
+    expect(prisma.appointment.findFirst).toHaveBeenCalledWith({
+      where: {
+        id: "appt_1",
+        barberShopId: "shop_1",
+        deletedAt: null,
+        OR: [
+          { queueStatus: { in: ["IN_SERVICE", "CALLED", "WAITING"] } },
+          {
+            queueStatus: "NOT_QUEUED",
+            status: { in: ["SCHEDULED", "CONFIRMED", "CHECKED_IN"] },
+          },
+        ],
+      },
+      select: {
+        id: true,
+        staffMemberId: true,
+        queueStatus: true,
+        queuePosition: true,
+      },
+    });
+    expect(prisma.appointment.update).toHaveBeenCalledWith({
+      where: { id: "appt_1" },
+      data: {
+        queueStatus: "SERVED",
+        status: "COMPLETED",
+        queuePosition: null,
+      },
+    });
+    expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
+    expect(prisma.appointment.findMany).not.toHaveBeenCalled();
+  });
+
   it("recalculates draft totals from persisted items after adding and removing sale items", async () => {
     prisma.saleItem.findMany.mockResolvedValueOnce([
       {
