@@ -32,6 +32,12 @@ const movableQueueStatuses: QueueStatus[] = [
   QueueStatus.CALLED,
 ];
 
+const cancellableScheduledAppointmentStatuses: AppointmentStatus[] = [
+  AppointmentStatus.SCHEDULED,
+  AppointmentStatus.CONFIRMED,
+  AppointmentStatus.CHECKED_IN,
+];
+
 const visibleWaitingSlotCount = 5;
 const visibleQueueSlotCount = 1 + visibleWaitingSlotCount;
 const defaultEmptyQueueSlotDurationMinutes = 60;
@@ -524,9 +530,15 @@ export const queueRepository: QueueRepository = {
           id: ticketId,
           barberShopId,
           deletedAt: null,
-          queueStatus: { in: activeQueueStatuses },
+          OR: [
+            { queueStatus: { in: activeQueueStatuses } },
+            {
+              queueStatus: QueueStatus.NOT_QUEUED,
+              status: { in: cancellableScheduledAppointmentStatuses },
+            },
+          ],
         },
-        select: { id: true },
+        select: { id: true, queueStatus: true },
       });
       if (!ticket) return null;
 
@@ -554,11 +566,23 @@ export const queueRepository: QueueRepository = {
         });
       }
 
-      await cancelQueueTicket(transaction, {
-        barberShopId,
-        appointmentId: ticketId,
-        reason,
-      });
+      if (activeQueueStatuses.includes(ticket.queueStatus)) {
+        await cancelQueueTicket(transaction, {
+          barberShopId,
+          appointmentId: ticketId,
+          reason,
+        });
+      } else {
+        await transaction.appointment.update({
+          where: { id: ticketId },
+          data: {
+            queueStatus: QueueStatus.LEFT,
+            status: AppointmentStatus.CANCELLED,
+            queuePosition: null,
+            cancellationReason: reason,
+          },
+        });
+      }
 
       return transaction.appointment.findFirst({
         where: { id: ticketId, barberShopId, deletedAt: null },

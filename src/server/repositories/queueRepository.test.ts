@@ -1301,7 +1301,7 @@ describe("queueRepository", () => {
 
   it("cancels an active ticket and its linked draft sale", async () => {
     prisma.appointment.findFirst
-      .mockResolvedValueOnce({ id: "appt_1" })
+      .mockResolvedValueOnce({ id: "appt_1", queueStatus: "WAITING" })
       .mockResolvedValueOnce({
         id: "appt_1",
         staffMemberId: "staff_1",
@@ -1343,6 +1343,38 @@ describe("queueRepository", () => {
       where: { id: "appt_2" },
       data: { queuePosition: 2 },
     });
+  });
+
+  it("cancels a scheduled NOT_QUEUED appointment and its linked draft sale without queue promotion", async () => {
+    prisma.appointment.findFirst
+      .mockResolvedValueOnce({ id: "appt_1", queueStatus: "NOT_QUEUED" })
+      .mockResolvedValueOnce({ id: "appt_1" });
+    prisma.sale.findFirst.mockResolvedValueOnce({
+      id: "sale_1",
+      status: "DRAFT",
+    });
+
+    await queueRepository.cancelTicket({
+      barberShopId: "shop_1",
+      ticketId: "appt_1",
+      reason: "Cliente canceló",
+    });
+
+    expect(prisma.sale.update).toHaveBeenCalledWith({
+      where: { id: "sale_1" },
+      data: { status: "CANCELLED", cancellationReason: "Cliente canceló" },
+    });
+    expect(prisma.appointment.update).toHaveBeenCalledWith({
+      where: { id: "appt_1" },
+      data: {
+        queueStatus: "LEFT",
+        status: "CANCELLED",
+        queuePosition: null,
+        cancellationReason: "Cliente canceló",
+      },
+    });
+    expect(prisma.$executeRawUnsafe).not.toHaveBeenCalled();
+    expect(prisma.appointment.findMany).not.toHaveBeenCalled();
   });
 });
 

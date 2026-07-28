@@ -15,6 +15,7 @@ const {
   appointmentsCreateScheduled,
   appointmentsListByDate,
   customersList,
+  queueCancelTicket,
   queueCreateWalkIn,
   servicesList,
   staffList,
@@ -22,6 +23,7 @@ const {
   appointmentsCreateScheduled: vi.fn(),
   appointmentsListByDate: vi.fn(),
   customersList: vi.fn(),
+  queueCancelTicket: vi.fn(),
   queueCreateWalkIn: vi.fn(),
   servicesList: vi.fn(),
   staffList: vi.fn(),
@@ -56,7 +58,7 @@ vi.mock("@/shared/api/queue", () => ({
     createWalkIn: queueCreateWalkIn,
     live: vi.fn(),
     updateTicket: vi.fn(),
-    cancelTicket: vi.fn(),
+    cancelTicket: queueCancelTicket,
   },
 }));
 
@@ -196,6 +198,55 @@ describe("AppointmentsView", () => {
       await screen.findByText("No se pudieron cargar las citas."),
     ).toBeInTheDocument();
     expect(screen.queryByText("Iván Soto")).not.toBeInTheDocument();
+  });
+
+  it("cancels a pending appointment with a required reason", async () => {
+    appointmentsListByDate.mockResolvedValue([
+      makeAppointment({ id: "appt_pending", clientName: "Pending Client" }),
+    ]);
+    staffList.mockResolvedValue([]);
+    queueCancelTicket.mockResolvedValue({ id: "appt_pending" });
+
+    renderAppointmentsView();
+
+    expect(await screen.findByText("Pending Client")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancelar" }));
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+
+    expect(
+      await screen.findByText("El motivo de cancelación es obligatorio."),
+    ).toBeInTheDocument();
+    expect(queueCancelTicket).not.toHaveBeenCalled();
+
+    await userEvent.type(
+      screen.getByLabelText("Motivo"),
+      "Cliente pidió cancelar",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Confirmar" }));
+
+    await waitFor(() =>
+      expect(queueCancelTicket).toHaveBeenCalledWith("appt_pending", {
+        reason: "Cliente pidió cancelar",
+      }),
+    );
+  });
+
+  it("does not show cancellation for in-service or final appointments", async () => {
+    appointmentsListByDate.mockResolvedValue([
+      makeAppointment({ id: "in_service", status: "IN_SERVICE" }),
+      makeAppointment({ id: "completed", status: "COMPLETED" }),
+      makeAppointment({ id: "cancelled", status: "CANCELLED" }),
+      makeAppointment({ id: "no_show", status: "NO_SHOW" }),
+    ]);
+    staffList.mockResolvedValue([]);
+
+    renderAppointmentsView();
+
+    expect(await screen.findByText("En curso")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Cancelar" }),
+    ).not.toBeInTheDocument();
   });
 });
 

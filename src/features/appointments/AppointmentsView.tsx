@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { PageHeader } from "@/shared/components/PageHeader";
 import { StatusBadge } from "@/shared/components/StatusBadge";
+import { CancelReasonDialog } from "@/shared/components/CancelReasonDialog";
 import { Button } from "@/components/ui/button";
 import { DataTable, type Column } from "@/widgets/data-table/DataTable";
 import {
@@ -18,7 +19,7 @@ import { queueApi, queueKeys } from "@/shared/api/queue";
 import { salesKeys } from "@/shared/api/sales";
 import { businessDateInputValue } from "@/shared/lib/businessLocale";
 import { time, initials } from "@/shared/lib/format";
-import { Calendar, CalendarClock, Filter, Plus } from "lucide-react";
+import { Calendar, CalendarClock, Filter, Plus, XCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 100;
@@ -71,6 +72,8 @@ export function AppointmentsView() {
   const [showFilters, setShowFilters] = useState(false);
   const [isWalkInDialogOpen, setIsWalkInDialogOpen] = useState(false);
   const [isAppointmentDialogOpen, setIsAppointmentDialogOpen] = useState(false);
+  const [appointmentToCancel, setAppointmentToCancel] =
+    useState<AppointmentListItemDto | null>(null);
   const [walkInError, setWalkInError] = useState<string | null>(null);
   const [appointmentError, setAppointmentError] = useState<string | null>(null);
 
@@ -116,6 +119,19 @@ export function AppointmentsView() {
       ]);
     },
     onError: (error) => setAppointmentError(errorMessage(error)),
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) =>
+      queueApi.cancelTicket(id, { reason }),
+    onSuccess: async () => {
+      setAppointmentToCancel(null);
+      await Promise.all([
+        refreshQueue(),
+        refreshSales(),
+        refreshAppointments(),
+      ]);
+    },
   });
 
   const appointments = appointmentsQuery.data ?? [];
@@ -200,6 +216,25 @@ export function AppointmentsView() {
       cell: (a) => (
         <StatusBadge tone={TONE[a.status]}>{LABEL[a.status]}</StatusBadge>
       ),
+    },
+    {
+      key: "actions",
+      header: "Acciones",
+      align: "right",
+      width: "120px",
+      cell: (a) =>
+        canCancelAppointment(a) ? (
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            disabled={cancelMutation.isPending}
+            onClick={() => setAppointmentToCancel(a)}
+          >
+            <XCircle className="h-4 w-4" /> Cancelar
+          </Button>
+        ) : null,
     },
   ];
 
@@ -347,6 +382,24 @@ export function AppointmentsView() {
         onOpenChange={setIsAppointmentDialogOpen}
         onSubmit={(input) => createAppointmentMutation.mutate(input)}
       />
+      <CancelReasonDialog
+        open={appointmentToCancel !== null}
+        title="Cancelar cita"
+        description="Confirmá la cancelación con un motivo obligatorio. Si hay una orden borrador vinculada, se cancelará con el mismo motivo."
+        context={[
+          { label: "Cliente", value: appointmentToCancel?.clientName },
+          { label: "Cita", value: appointmentToCancel?.id },
+          { label: "Estado", value: appointmentToCancel?.status },
+        ]}
+        isSubmitting={cancelMutation.isPending}
+        onOpenChange={(open) => {
+          if (!open) setAppointmentToCancel(null);
+        }}
+        onConfirm={(reason) => {
+          if (!appointmentToCancel) return;
+          cancelMutation.mutate({ id: appointmentToCancel.id, reason });
+        }}
+      />
     </>
   );
 }
@@ -368,6 +421,14 @@ function appointmentTab(appointment: AppointmentListItemDto) {
   if (appointment.status === "IN_SERVICE") return "in_service";
   if (appointment.status === "COMPLETED") return "completed";
   return "all";
+}
+
+function canCancelAppointment(appointment: AppointmentListItemDto) {
+  return (
+    appointment.status === "SCHEDULED" ||
+    appointment.status === "CONFIRMED" ||
+    appointment.status === "CHECKED_IN"
+  );
 }
 
 function avatarColor(seed: string) {
