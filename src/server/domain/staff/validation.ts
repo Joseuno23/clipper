@@ -26,6 +26,7 @@ const staffCreateSchema = z.object({
   displayName: z.string(),
   email: z.string().nullable().optional(),
   phone: z.string().nullable().optional(),
+  photoDataUrl: z.string().nullable().optional(),
   isActive: z.boolean().optional(),
   commissionMode: z.nativeEnum(CommissionMode).optional(),
   commissionValue: z.union([z.number(), z.string()]).optional(),
@@ -89,6 +90,9 @@ export function normalizeStaffCreateInput(
       normalizeText(input.phone, { maxLength: 40 }),
     ),
     normalizedPhone: normalizeField("phone", () => normalizePhone(input.phone)),
+    photoDataUrl: normalizeField("photoDataUrl", () =>
+      normalizePhotoDataUrl(input.photoDataUrl),
+    ),
     isActive: input.isActive ?? true,
     commissionMode,
     commissionValue: normalizeCommissionValue(
@@ -136,6 +140,11 @@ export function normalizeStaffUpdateInput(
     );
     data.normalizedPhone = normalizeField("phone", () =>
       normalizePhone(input.phone),
+    );
+  }
+  if ("photoDataUrl" in input) {
+    data.photoDataUrl = normalizeField("photoDataUrl", () =>
+      normalizePhotoDataUrl(input.photoDataUrl),
     );
   }
   if ("isActive" in input) {
@@ -272,6 +281,21 @@ function normalizeServiceCommissions(
       ),
     }))
     .sort((a, b) => a.serviceId.localeCompare(b.serviceId));
+}
+
+function normalizePhotoDataUrl(value: StaffCreateInput["photoDataUrl"]) {
+  const normalized = normalizeText(value, { maxLength: 512 * 1024 });
+  if (normalized === null) return null;
+
+  if (
+    !/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(
+      normalized,
+    )
+  ) {
+    throw new Error("Photo must be a JPEG, PNG, or WebP data URL.");
+  }
+
+  return normalized;
 }
 
 function normalizeField<T>(field: string, normalize: () => T): T {

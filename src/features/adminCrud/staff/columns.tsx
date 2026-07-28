@@ -1,6 +1,7 @@
 import type { Column } from "@/widgets/data-table/DataTable";
 import { StatusBadge } from "@/shared/components/StatusBadge";
 import { RowActions } from "@/shared/components/adminCrud";
+import { initials } from "@/shared/lib/format";
 import type {
   CommissionMode,
   StaffDto,
@@ -37,12 +38,25 @@ export function staffColumns({
       key: "staff",
       header: "Staff",
       cell: (staff) => (
-        <div>
-          <p className="font-medium">{staff.displayName}</p>
-          <p className="text-xs text-muted-foreground">
-            {[staff.email, staff.phone].filter(Boolean).join(" · ") ||
-              "Sin contacto"}
-          </p>
+        <div className="flex items-center gap-3">
+          {staff.photoDataUrl ? (
+            <img
+              src={staff.photoDataUrl}
+              alt={`Foto de ${staff.displayName}`}
+              className="h-10 w-10 rounded-full object-cover"
+            />
+          ) : (
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-xs font-semibold text-muted-foreground">
+              {initials(staff.displayName)}
+            </div>
+          )}
+          <div>
+            <p className="font-medium">{staff.displayName}</p>
+            <p className="text-xs text-muted-foreground">
+              {[staff.email, staff.phone].filter(Boolean).join(" · ") ||
+                "Sin contacto"}
+            </p>
+          </div>
         </div>
       ),
     },

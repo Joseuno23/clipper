@@ -46,6 +46,7 @@ export const staffRepository: StaffRepository = {
         normalizedEmail: data.normalizedEmail,
         phone: data.phone,
         normalizedPhone: data.normalizedPhone,
+        photoDataUrl: data.photoDataUrl,
         isActive: data.isActive,
         commissionMode: data.commissionMode,
         commissionValue: data.commissionValue,
@@ -295,6 +296,9 @@ function toStaffUpdateData(data: NormalizedStaffUpdateInput) {
     ...(data.normalizedPhone === undefined
       ? {}
       : { normalizedPhone: data.normalizedPhone }),
+    ...(data.photoDataUrl === undefined
+      ? {}
+      : { photoDataUrl: data.photoDataUrl }),
     ...(data.isActive === undefined ? {} : { isActive: data.isActive }),
     ...(data.commissionMode === undefined
       ? {}

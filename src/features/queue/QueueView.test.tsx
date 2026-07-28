@@ -1220,6 +1220,7 @@ function makeStaff(overrides: Partial<StaffDto> = {}): StaffDto {
     displayName: "Ana Barber",
     email: null,
     phone: null,
+    photoDataUrl: null,
     isActive: true,
     commissionMode: "NONE",
     commissionValue: "0.00",

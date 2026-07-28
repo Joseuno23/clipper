@@ -75,6 +75,7 @@ export type StaffDto = {
   displayName: string;
   email: string | null;
   phone: string | null;
+  photoDataUrl: string | null;
   isActive: boolean;
   commissionMode: CommissionMode;
   commissionValue: string;
@@ -105,6 +106,7 @@ export type StaffCreateInput = {
   displayName: string;
   email?: string | null;
   phone?: string | null;
+  photoDataUrl?: string | null;
   isActive?: boolean;
   commissionMode?: CommissionMode;
   commissionValue?: number | string;

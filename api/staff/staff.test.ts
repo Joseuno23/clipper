@@ -49,6 +49,7 @@ const authContext = {
 };
 
 const now = new Date("2026-01-01T00:00:00.000Z");
+const photoDataUrl = "data:image/png;base64,aGVsbG8=";
 
 function createRecord(overrides: Partial<StaffRecord> = {}): StaffRecord {
   return {
@@ -62,6 +63,7 @@ function createRecord(overrides: Partial<StaffRecord> = {}): StaffRecord {
     normalizedEmail: "ada@clipper.test",
     phone: null,
     normalizedPhone: null,
+    photoDataUrl: null,
     isActive: true,
     commissionMode: "NONE",
     commissionValue: { toString: () => "0.00" },
@@ -171,6 +173,7 @@ describe("staff API handlers", () => {
           lastName: " Lovelace ",
           displayName: " Ada   L. ",
           email: "ADA@CLIPPER.TEST",
+          photoDataUrl,
           roles: ["BARBER"],
           serviceCommissions: [
             {
@@ -192,6 +195,7 @@ describe("staff API handlers", () => {
         lastName: "Lovelace",
         displayName: "Ada L.",
         normalizedEmail: "ada@clipper.test",
+        photoDataUrl,
         roles: ["BARBER"],
         serviceCommissions: [
           {
@@ -225,6 +229,7 @@ describe("staff API handlers", () => {
         query: { id: "staff_1" },
         body: {
           displayName: " Ada Updated ",
+          photoDataUrl: null,
           roles: ["MANAGER"],
           serviceCommissions: [],
         },
@@ -236,6 +241,7 @@ describe("staff API handlers", () => {
       id: "staff_1",
       data: {
         displayName: "Ada Updated",
+        photoDataUrl: null,
         roles: ["MANAGER"],
         serviceCommissions: [],
       },

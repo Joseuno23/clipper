@@ -211,6 +211,7 @@ model StaffMember {
   normalizedEmail String?
   phone           String?
   normalizedPhone String?
+  photoDataUrl    String?
   isActive        Boolean        @default(true)
   commissionMode  CommissionMode @default(NONE)
   commissionValue Decimal        @default(0) @db.Decimal(12, 2)

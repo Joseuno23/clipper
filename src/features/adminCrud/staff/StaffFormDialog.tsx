@@ -39,6 +39,7 @@ type StaffFormValues = {
   displayName: string;
   email: string;
   phone: string;
+  photoDataUrl: string | null;
   isActive: boolean;
   specialties: string;
   roles: StaffRole[];
@@ -65,6 +66,7 @@ const emptyValues: StaffFormValues = {
   displayName: "",
   email: "",
   phone: "",
+  photoDataUrl: null,
   isActive: true,
   specialties: "",
   roles: [],
@@ -73,6 +75,8 @@ const emptyValues: StaffFormValues = {
 
 const SERVICES_PAGE_SIZE = 100;
 const SERVICES_LIST_PARAMS = { limit: SERVICES_PAGE_SIZE, offset: 0 };
+const STAFF_PHOTO_MAX_BYTES = 360 * 1024;
+const STAFF_PHOTO_TYPES = ["image/jpeg", "image/png", "image/webp"];
 
 export function StaffFormDialog({
   open,
@@ -102,6 +106,7 @@ export function StaffFormDialog({
             displayName: staff.displayName,
             email: staff.email ?? "",
             phone: staff.phone ?? "",
+            photoDataUrl: staff.photoDataUrl,
             isActive: staff.isActive,
             specialties: staff.specialties.join(", "),
             roles: staff.roles,
@@ -161,6 +166,27 @@ export function StaffFormDialog({
     }));
   }
 
+  async function handlePhotoChange(file: File | undefined) {
+    if (!file) return;
+
+    if (!STAFF_PHOTO_TYPES.includes(file.type)) {
+      setLocalError("La foto debe ser JPG, PNG o WebP.");
+      return;
+    }
+
+    if (file.size > STAFF_PHOTO_MAX_BYTES) {
+      setLocalError("La foto no puede superar 360 KB.");
+      return;
+    }
+
+    try {
+      updateValue("photoDataUrl", await readFileAsDataUrl(file));
+      setLocalError(null);
+    } catch {
+      setLocalError("No se pudo leer la foto seleccionada.");
+    }
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -215,6 +241,7 @@ export function StaffFormDialog({
         displayName,
         email: nullable(values.email),
         phone: nullable(values.phone),
+        photoDataUrl: values.photoDataUrl,
         isActive: values.isActive,
         commissionMode: "NONE",
         commissionValue: "0",
@@ -303,6 +330,50 @@ export function StaffFormDialog({
               />
             </Field>
           </div>
+
+          <section className="space-y-2 rounded-md border p-3">
+            <div className="flex items-center gap-3">
+              {values.photoDataUrl ? (
+                <img
+                  src={values.photoDataUrl}
+                  alt={`Foto de ${values.displayName || "staff"}`}
+                  className="h-14 w-14 rounded-full object-cover"
+                />
+              ) : (
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-muted text-sm font-semibold text-muted-foreground">
+                  Sin foto
+                </div>
+              )}
+              <div className="space-y-1">
+                <Label htmlFor="staffPhoto">Foto</Label>
+                <p className="text-xs text-muted-foreground">
+                  JPG, PNG o WebP. Máximo 360 KB.
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Input
+                id="staffPhoto"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(event) => {
+                  void handlePhotoChange(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
+                disabled={isSubmitting}
+              />
+              {values.photoDataUrl && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => updateValue("photoDataUrl", null)}
+                  disabled={isSubmitting}
+                >
+                  Quitar foto
+                </Button>
+              )}
+            </div>
+          </section>
 
           <Field label="Especialidades" htmlFor="staffSpecialties">
             <Input
@@ -527,6 +598,22 @@ async function loadAllServices() {
       return services;
     }
   }
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+        return;
+      }
+
+      reject(new Error("FileReader result was not a string."));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
 }
 
 function staffRoleLabel(role: StaffRole) {

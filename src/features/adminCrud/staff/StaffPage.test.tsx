@@ -15,6 +15,8 @@ afterEach(() => {
 });
 
 describe("StaffCrudPage", () => {
+  const photoDataUrl = "data:image/png;base64,aGVsbG8=";
+
   it("renders staff rows from the API", async () => {
     stubFetch([
       {
@@ -22,6 +24,7 @@ describe("StaffCrudPage", () => {
         data: [
           makeStaff({
             displayName: "Ada L.",
+            photoDataUrl,
             roles: ["BARBER", "COLORIST"],
             specialties: ["Corte", "Color"],
             commissionMode: "PERCENTAGE_BPS",
@@ -34,6 +37,10 @@ describe("StaffCrudPage", () => {
     renderStaffPage();
 
     expect(await screen.findByText("Ada L.")).toBeInTheDocument();
+    expect(screen.getByAltText("Foto de Ada L.")).toHaveAttribute(
+      "src",
+      photoDataUrl,
+    );
     expect(screen.getByText("Barbero, Colorista")).toBeInTheDocument();
     expect(screen.getByText("Corte, Color")).toBeInTheDocument();
     expect(
@@ -41,6 +48,16 @@ describe("StaffCrudPage", () => {
     ).not.toBeInTheDocument();
     expect(screen.queryByText("Porcentaje · 15%")).not.toBeInTheDocument();
     expect(screen.getByText("Activo")).toBeInTheDocument();
+  });
+
+  it("falls back to staff initials when no photo is present", async () => {
+    stubFetch([{ ok: true, data: [makeStaff({ photoDataUrl: null })] }]);
+
+    renderStaffPage();
+
+    expect(await screen.findByText("Ada L.")).toBeInTheDocument();
+    expect(screen.queryByAltText("Foto de Ada L.")).not.toBeInTheDocument();
+    expect(screen.getByText("AL")).toBeInTheDocument();
   });
 
   it("refreshes the list after creating a staff member", async () => {
@@ -60,6 +77,10 @@ describe("StaffCrudPage", () => {
     await userEvent.type(
       screen.getByLabelText("Especialidades"),
       "Barba, Color",
+    );
+    await userEvent.upload(
+      screen.getByLabelText("Foto"),
+      new File(["hello"], "grace.png", { type: "image/png" }),
     );
     await userEvent.click(screen.getByLabelText("Barbero"));
     expect(await screen.findByText("Classic Cut")).toBeInTheDocument();
@@ -91,6 +112,7 @@ describe("StaffCrudPage", () => {
           displayName: "Grace H.",
           email: null,
           phone: null,
+          photoDataUrl,
           isActive: true,
           commissionMode: "NONE",
           commissionValue: "0",
@@ -159,6 +181,55 @@ describe("StaffCrudPage", () => {
         body: expect.stringContaining('"serviceId":"color"'),
       }),
     );
+  });
+
+  it("removes an existing staff photo on edit", async () => {
+    const fetchMock = stubFetch([
+      { ok: true, data: [makeStaff({ photoDataUrl })] },
+      { ok: true, data: [makeService()] },
+      { ok: true, data: makeStaff({ photoDataUrl: null }) },
+      { ok: true, data: [makeStaff({ photoDataUrl: null })] },
+    ]);
+    renderStaffPage();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Editar" }),
+    );
+    expect(screen.getAllByAltText("Foto de Ada L.")[1]).toHaveAttribute(
+      "src",
+      photoDataUrl,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Quitar foto" }));
+    await userEvent.click(screen.getByRole("button", { name: "Guardar" }));
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/staff/staff_1",
+      expect.objectContaining({
+        method: "PATCH",
+        body: expect.stringContaining('"photoDataUrl":null'),
+      }),
+    );
+  });
+
+  it("rejects staff photo files above the client-side limit", async () => {
+    stubFetch([
+      { ok: true, data: [] },
+      { ok: true, data: [makeService()] },
+    ]);
+    renderStaffPage();
+
+    await screen.findByText("Todavía no hay staff");
+    await userEvent.click(screen.getByRole("button", { name: "Nuevo staff" }));
+    await userEvent.upload(
+      screen.getByLabelText("Foto"),
+      new File(["x".repeat(361 * 1024)], "large.png", {
+        type: "image/png",
+      }),
+    );
+
+    expect(
+      await screen.findByText("La foto no puede superar 360 KB."),
+    ).toBeInTheDocument();
   });
 
   it("loads every services page before submitting staff commissions", async () => {
@@ -303,6 +374,7 @@ function makeStaff(overrides: Partial<StaffDto> = {}): StaffDto {
     displayName: "Ada L.",
     email: "ada@clipper.test",
     phone: null,
+    photoDataUrl: null,
     isActive: true,
     commissionMode: "NONE",
     commissionValue: "0.00",

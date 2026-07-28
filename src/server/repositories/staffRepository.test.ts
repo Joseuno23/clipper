@@ -44,6 +44,7 @@ describe("staffRepository", () => {
       normalizedEmail: null,
       phone: null,
       normalizedPhone: null,
+      photoDataUrl: null,
       isActive: true,
       commissionMode: "NONE",
       commissionValue: { toString: () => "0.00" },
@@ -97,5 +98,18 @@ describe("staffRepository", () => {
       },
     });
     expect(prisma.staffServiceCommission.createMany).not.toHaveBeenCalled();
+  });
+
+  it("persists explicit staff photo updates", async () => {
+    await staffRepository.update({
+      barberShopId: "shop_1",
+      id: "staff_1",
+      data: { photoDataUrl: "data:image/png;base64,aGVsbG8=" },
+    });
+
+    expect(prisma.staffMember.update).toHaveBeenCalledWith({
+      where: { id: "staff_1" },
+      data: { photoDataUrl: "data:image/png;base64,aGVsbG8=" },
+    });
   });
 });

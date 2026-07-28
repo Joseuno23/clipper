@@ -37,6 +37,7 @@ const baseContext = {
 } as const;
 
 const now = new Date("2026-01-01T00:00:00.000Z");
+const photoDataUrl = "data:image/png;base64,aGVsbG8=";
 
 function createRecord(overrides: Partial<StaffRecord> = {}): StaffRecord {
   return {
@@ -50,6 +51,7 @@ function createRecord(overrides: Partial<StaffRecord> = {}): StaffRecord {
     normalizedEmail: "ada@clipper.test",
     phone: "+5491112345678",
     normalizedPhone: "+5491112345678",
+    photoDataUrl: null,
     isActive: true,
     commissionMode: "PERCENTAGE_BPS",
     commissionValue: { toString: () => "2500.00" },
@@ -98,6 +100,7 @@ function createRepository(): StaffRepository {
         normalizedEmail: data.normalizedEmail,
         phone: data.phone,
         normalizedPhone: data.normalizedPhone,
+        photoDataUrl: data.photoDataUrl,
         isActive: data.isActive,
         commissionMode: data.commissionMode,
         commissionValue: { toString: () => data.commissionValue },
@@ -177,6 +180,7 @@ describe("staff service", () => {
       displayName: " Ada   L. ",
       email: "ADA@CLIPPER.TEST",
       phone: " +54 9 11 1234-5678 ",
+      photoDataUrl,
       isActive: false,
       commissionMode: "PERCENTAGE_BPS",
       commissionValue: "2500",
@@ -203,6 +207,7 @@ describe("staff service", () => {
         displayName: "Ada L.",
         email: "ada@clipper.test",
         normalizedPhone: "+5491112345678",
+        photoDataUrl,
         isActive: false,
         commissionMode: "PERCENTAGE_BPS",
         commissionValue: "2500.00",
@@ -262,6 +267,24 @@ describe("staff service", () => {
         lastName: "Lovelace",
         displayName: "Ada",
         restDays: ["not-a-date"],
+      }),
+    ).toThrow(ApiError);
+
+    expect(() =>
+      parseStaffCreateInput({
+        firstName: "Ada",
+        lastName: "Lovelace",
+        displayName: "Ada",
+        photoDataUrl: "data:image/gif;base64,aGVsbG8=",
+      }),
+    ).toThrow(ApiError);
+
+    expect(() =>
+      parseStaffCreateInput({
+        firstName: "Ada",
+        lastName: "Lovelace",
+        displayName: "Ada",
+        photoDataUrl: `data:image/png;base64,${"a".repeat(512 * 1024)}`,
       }),
     ).toThrow(ApiError);
   });

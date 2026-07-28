@@ -33,6 +33,7 @@ export type StaffRecord = {
   normalizedEmail: string | null;
   phone: string | null;
   normalizedPhone: string | null;
+  photoDataUrl: string | null;
   isActive: boolean;
   commissionMode: CommissionMode;
   commissionValue: { toString(): string };
@@ -90,6 +91,7 @@ export type StaffCreateInput = {
   displayName: string;
   email?: string | null;
   phone?: string | null;
+  photoDataUrl?: string | null;
   isActive?: boolean;
   commissionMode?: CommissionMode;
   commissionValue?: number | string;
@@ -111,6 +113,7 @@ export type NormalizedStaffCreateInput = {
   normalizedEmail: string | null;
   phone: string | null;
   normalizedPhone: string | null;
+  photoDataUrl: string | null;
   isActive: boolean;
   commissionMode: CommissionMode;
   commissionValue: string;

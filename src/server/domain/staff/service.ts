@@ -101,6 +101,7 @@ export function toStaffDto(record: {
   normalizedEmail: string | null;
   phone: string | null;
   normalizedPhone: string | null;
+  photoDataUrl: string | null;
   isActive: boolean;
   commissionMode: StaffDto["commissionMode"];
   commissionValue: { toString(): string };
@@ -126,6 +127,7 @@ export function toStaffDto(record: {
     normalizedEmail: record.normalizedEmail,
     phone: record.phone,
     normalizedPhone: record.normalizedPhone,
+    photoDataUrl: record.photoDataUrl,
     isActive: record.isActive,
     commissionMode: record.commissionMode,
     commissionValue: record.commissionValue.toString(),
