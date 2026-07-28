@@ -188,7 +188,7 @@ export function LoginPage() {
               <button
                 type="button"
                 disabled
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-border bg-surface text-sm font-medium opacity-60"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-md border border-border-strong bg-card text-sm font-medium opacity-70 dark:border-border dark:bg-surface dark:opacity-60"
               >
                 <GoogleIcon className="h-4 w-4" />
                 Continuar con Google · Próximamente
@@ -214,15 +214,33 @@ export function LoginPage() {
 
         {/* Right — brand panel */}
         <div className="relative hidden overflow-hidden border-l border-border lg:block">
+          {/* Base gradient — light tint (default) vs near-black (dark).
+              Two layers toggled by theme class to keep gradients out of JS. */}
           <div
-            className="absolute inset-0"
+            className="absolute inset-0 dark:hidden"
+            style={{
+              background:
+                "radial-gradient(1200px 600px at 80% -10%, oklch(0.90 0.05 268), transparent 60%), radial-gradient(900px 500px at 10% 110%, oklch(0.92 0.04 260), transparent 60%), linear-gradient(180deg, oklch(0.975 0.006 260), oklch(0.95 0.008 260))",
+            }}
+          />
+          <div
+            className="absolute inset-0 hidden dark:block"
             style={{
               background:
                 "radial-gradient(1200px 600px at 80% -10%, oklch(0.35 0.08 260 / 0.6), transparent 60%), radial-gradient(900px 500px at 10% 110%, oklch(0.30 0.06 260 / 0.5), transparent 60%), linear-gradient(180deg, oklch(0.18 0.013 260), oklch(0.14 0.012 260))",
             }}
           />
+          {/* Grid overlay — dark lines on light, white lines on dark */}
           <div
-            className="absolute inset-0 opacity-[0.05]"
+            className="absolute inset-0 opacity-[0.04] dark:hidden"
+            style={{
+              backgroundImage:
+                "linear-gradient(oklch(0.20 0.02 260) 1px, transparent 1px), linear-gradient(90deg, oklch(0.20 0.02 260) 1px, transparent 1px)",
+              backgroundSize: "48px 48px",
+            }}
+          />
+          <div
+            className="absolute inset-0 hidden opacity-[0.05] dark:block"
             style={{
               backgroundImage:
                 "linear-gradient(oklch(1 0 0 / 0.6) 1px, transparent 1px), linear-gradient(90deg, oklch(1 0 0 / 0.6) 1px, transparent 1px)",
@@ -294,7 +312,7 @@ function Field({
         <label className="text-xs font-medium text-foreground">{label}</label>
         {action}
       </div>
-      <div className="relative flex items-center rounded-md border border-border bg-surface transition-colors focus-within:border-ring">
+      <div className="relative flex items-center rounded-md border border-border-strong bg-card shadow-xs transition-colors focus-within:border-ring dark:border-border dark:bg-surface dark:shadow-none">
         <span className="pointer-events-none absolute left-3 text-muted-foreground">
           {icon}
         </span>
@@ -310,7 +328,7 @@ function Field({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md border border-border bg-surface/60 p-3 backdrop-blur">
+    <div className="rounded-md border border-border-strong bg-surface/70 p-3 shadow-xs backdrop-blur dark:border-border dark:bg-surface/60 dark:shadow-none">
       <p className="font-display text-xl font-semibold tracking-tight">
         {value}
       </p>
