@@ -32,6 +32,10 @@ const movableQueueStatuses: QueueStatus[] = [
   QueueStatus.CALLED,
 ];
 
+const visibleWaitingSlotCount = 5;
+const visibleQueueSlotCount = 1 + visibleWaitingSlotCount;
+const defaultEmptyQueueSlotDurationMinutes = 60;
+
 const ticketInclude = {
   client: { select: { id: true, firstName: true, lastName: true } },
   services: { orderBy: { sortOrder: "asc" as const } },
@@ -48,8 +52,8 @@ export const queueRepository: QueueRepository = {
   async listLiveQueues({ barberShopId }) {
     const now = new Date();
 
-    const [staffMembers, tickets] = await Promise.all([
-      prisma.staffMember.findMany({
+    return prisma.$transaction(async (transaction) => {
+      const staffMembers = await transaction.staffMember.findMany({
         where: { barberShopId, deletedAt: null, isActive: true },
         select: {
           id: true,
@@ -64,20 +68,22 @@ export const queueRepository: QueueRepository = {
           { lastName: "asc" },
           { firstName: "asc" },
         ],
-      }),
-      prisma.appointment.findMany({
+      });
+
+      for (const staff of staffMembers) {
+        await activateScheduledAppointmentsInProjectionWindow(transaction, {
+          barberShopId,
+          staffMemberId: staff.id,
+          now,
+        });
+      }
+
+      const tickets = await transaction.appointment.findMany({
         where: {
           barberShopId,
           deletedAt: null,
           staffMemberId: { not: null },
           queueStatus: { in: activeQueueStatuses },
-          OR: [
-            { source: AppointmentSource.WALK_IN },
-            {
-              source: { not: AppointmentSource.WALK_IN },
-              startAt: { lte: now },
-            },
-          ],
         },
         include: ticketInclude,
         orderBy: [
@@ -85,21 +91,21 @@ export const queueRepository: QueueRepository = {
           { startAt: "asc" },
           { queuedAt: "asc" },
         ],
-      }),
-    ]);
+      });
 
-    const ticketsByStaff = new Map<string, typeof tickets>();
-    for (const ticket of tickets) {
-      if (!ticket.staffMemberId) continue;
-      const group = ticketsByStaff.get(ticket.staffMemberId) ?? [];
-      group.push(ticket);
-      ticketsByStaff.set(ticket.staffMemberId, group);
-    }
+      const ticketsByStaff = new Map<string, typeof tickets>();
+      for (const ticket of tickets) {
+        if (!ticket.staffMemberId) continue;
+        const group = ticketsByStaff.get(ticket.staffMemberId) ?? [];
+        group.push(ticket);
+        ticketsByStaff.set(ticket.staffMemberId, group);
+      }
 
-    return staffMembers.map((staff) => ({
-      ...staff,
-      tickets: ticketsByStaff.get(staff.id) ?? [],
-    }));
+      return staffMembers.map((staff) => ({
+        ...staff,
+        tickets: ticketsByStaff.get(staff.id) ?? [],
+      }));
+    });
   },
 
   async listAppointmentsByDate({ barberShopId, from, toExclusive }) {
@@ -581,6 +587,8 @@ type QueuePositionClient = {
         queuePosition?: number | null;
         queueStatus?: QueueStatus;
         status?: ReturnType<typeof appointmentStatusForQueueStatus>;
+        queuedAt?: Date | null;
+        checkedInAt?: Date | null;
       };
       include?: typeof ticketInclude;
     }): Promise<unknown>;
@@ -591,6 +599,14 @@ type WaitingTicketPosition = {
   id: string;
   queuePosition: number | null;
   queuedAt: Date | null;
+};
+
+type ProjectionTicket = WaitingTicketPosition & {
+  source: AppointmentSource;
+  queueStatus: QueueStatus;
+  startAt: Date;
+  endAt: Date;
+  services: Array<{ serviceDurationSnapshot: number }>;
 };
 
 type QueueTransactionClient = QueuePositionClient & {
@@ -650,6 +666,153 @@ async function nextQueuePosition(
   });
 
   return (result._max.queuePosition ?? 0) + 1;
+}
+
+async function activateScheduledAppointmentsInProjectionWindow(
+  client: QueuePositionClient,
+  input: { barberShopId: string; staffMemberId: string; now: Date },
+) {
+  await lockStaffQueue(client, input);
+
+  const records = (await client.appointment.findMany({
+    where: {
+      barberShopId: input.barberShopId,
+      staffMemberId: input.staffMemberId,
+      deletedAt: null,
+      OR: [
+        { queueStatus: { in: activeQueueStatuses } },
+        {
+          source: { not: AppointmentSource.WALK_IN },
+          status: {
+            in: [AppointmentStatus.SCHEDULED, AppointmentStatus.CONFIRMED],
+          },
+          queueStatus: QueueStatus.NOT_QUEUED,
+          queuePosition: null,
+          startAt: { gte: input.now },
+        },
+      ],
+    },
+    include: ticketInclude,
+    orderBy: [
+      { queuePosition: "asc" },
+      { startAt: "asc" },
+      { queuedAt: "asc" },
+    ],
+  })) as unknown as ProjectionTicket[];
+
+  const activeTickets = records
+    .filter((record) => activeQueueStatuses.includes(record.queueStatus))
+    .sort(compareProjectionTickets);
+  const scheduledTickets = records
+    .filter(
+      (record) =>
+        record.queueStatus === QueueStatus.NOT_QUEUED &&
+        record.queuePosition === null &&
+        record.startAt.getTime() >= input.now.getTime(),
+    )
+    .sort((left, right) => left.startAt.getTime() - right.startAt.getTime());
+
+  for (const scheduledTicket of scheduledTickets) {
+    const projectedQueuePosition = projectedScheduledQueuePosition({
+      activeTickets,
+      startAt: scheduledTicket.startAt,
+      now: input.now,
+    });
+
+    if (projectedQueuePosition === null) continue;
+
+    const queuePosition = firstFreeQueuePositionAtOrAfter({
+      activeTickets,
+      queuePosition: projectedQueuePosition,
+    });
+
+    if (queuePosition === null) continue;
+
+    await client.appointment.update({
+      where: { id: scheduledTicket.id },
+      data: {
+        queueStatus: QueueStatus.WAITING,
+        status: appointmentStatusForQueueStatus(QueueStatus.WAITING),
+        queuePosition,
+        queuedAt: input.now,
+        checkedInAt: input.now,
+      },
+    });
+
+    activeTickets.push({
+      ...scheduledTicket,
+      queueStatus: QueueStatus.WAITING,
+      queuePosition,
+      queuedAt: input.now,
+    });
+    activeTickets.sort(compareProjectionTickets);
+  }
+}
+
+function projectedScheduledQueuePosition(input: {
+  activeTickets: ProjectionTicket[];
+  startAt: Date;
+  now: Date;
+}) {
+  const ticketsByPosition = new Map<number, ProjectionTicket>();
+  for (const ticket of input.activeTickets) {
+    if (ticket.queuePosition === null) continue;
+    ticketsByPosition.set(ticket.queuePosition, ticket);
+  }
+
+  let cursor = input.now.getTime();
+  const target = input.startAt.getTime();
+
+  for (let position = 1; position <= visibleQueueSlotCount; position += 1) {
+    const ticket = ticketsByPosition.get(position);
+
+    if (ticket) {
+      cursor += durationMinutes(ticket) * 60_000;
+      if (target <= cursor) {
+        const nextPosition = position + 1;
+        return nextPosition <= visibleQueueSlotCount ? nextPosition : null;
+      }
+      continue;
+    }
+
+    cursor += defaultEmptyQueueSlotDurationMinutes * 60_000;
+    if (target <= cursor) return position;
+  }
+
+  return null;
+}
+
+function firstFreeQueuePositionAtOrAfter(input: {
+  activeTickets: ProjectionTicket[];
+  queuePosition: number;
+}) {
+  const occupiedPositions = new Set(
+    input.activeTickets
+      .map((ticket) => ticket.queuePosition)
+      .filter((position): position is number => position !== null),
+  );
+
+  for (
+    let position = input.queuePosition;
+    position <= visibleQueueSlotCount;
+    position += 1
+  ) {
+    if (!occupiedPositions.has(position)) return position;
+  }
+
+  return null;
+}
+
+function compareProjectionTickets(
+  left: ProjectionTicket,
+  right: ProjectionTicket,
+) {
+  return (
+    (left.queuePosition ?? Number.MAX_SAFE_INTEGER) -
+      (right.queuePosition ?? Number.MAX_SAFE_INTEGER) ||
+    left.startAt.getTime() - right.startAt.getTime() ||
+    (left.queuedAt?.getTime() ?? 0) - (right.queuedAt?.getTime() ?? 0)
+  );
 }
 
 async function assertStaffAvailableForAppointment(
