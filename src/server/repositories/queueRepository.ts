@@ -479,6 +479,21 @@ export const queueRepository: QueueRepository = {
         include: ticketInclude,
       });
 
+      if (movedStaff || data.clientId !== undefined) {
+        await transaction.sale.updateMany({
+          where: {
+            barberShopId,
+            appointmentId: ticketId,
+            deletedAt: null,
+            status: SaleStatus.DRAFT,
+          },
+          data: {
+            ...(movedStaff ? { staffMemberId } : {}),
+            ...(data.clientId === undefined ? {} : { clientId: data.clientId }),
+          },
+        });
+      }
+
       if (
         movedStaff &&
         existing.queueStatus === QueueStatus.IN_SERVICE &&

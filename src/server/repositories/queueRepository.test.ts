@@ -26,6 +26,7 @@ const prisma = vi.hoisted(() => ({
     create: vi.fn(),
     findFirst: vi.fn(),
     update: vi.fn(),
+    updateMany: vi.fn(),
   },
   saleItem: {
     deleteMany: vi.fn(),
@@ -84,6 +85,7 @@ describe("queueRepository", () => {
     prisma.sale.create.mockReset().mockResolvedValue({ id: "sale_1" });
     prisma.sale.findFirst.mockReset().mockResolvedValue({ id: "sale_1" });
     prisma.sale.update.mockReset().mockResolvedValue({ id: "sale_1" });
+    prisma.sale.updateMany.mockReset().mockResolvedValue({ count: 1 });
     prisma.saleItem.deleteMany.mockReset().mockResolvedValue({ count: 1 });
     prisma.saleItem.createMany.mockReset().mockResolvedValue({ count: 2 });
     prisma.saleItem.findMany.mockReset().mockResolvedValue([]);
@@ -808,6 +810,28 @@ describe("queueRepository", () => {
     );
   });
 
+  it("updates the linked draft sale staff when moving a ticket to another staff", async () => {
+    prisma.appointment.aggregate.mockResolvedValueOnce({
+      _max: { queuePosition: null },
+    });
+
+    await queueRepository.updateTicket({
+      barberShopId: "shop_1",
+      ticketId: "appt_1",
+      data: { staffMemberId: "staff_2" },
+    });
+
+    expect(prisma.sale.updateMany).toHaveBeenCalledWith({
+      where: {
+        barberShopId: "shop_1",
+        appointmentId: "appt_1",
+        deletedAt: null,
+        status: "DRAFT",
+      },
+      data: { staffMemberId: "staff_2" },
+    });
+  });
+
   it("moves waiting tickets to an empty destination queue as in service", async () => {
     prisma.appointment.aggregate.mockResolvedValueOnce({
       _max: { queuePosition: null },
@@ -1297,6 +1321,15 @@ describe("queueRepository", () => {
         }),
       }),
     );
+    expect(prisma.sale.updateMany).toHaveBeenCalledWith({
+      where: {
+        barberShopId: "shop_1",
+        appointmentId: "appt_1",
+        deletedAt: null,
+        status: "DRAFT",
+      },
+      data: { clientId: "client_2" },
+    });
   });
 
   it("cancels an active ticket and its linked draft sale", async () => {
