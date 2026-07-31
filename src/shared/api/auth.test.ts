@@ -12,6 +12,7 @@ import {
 
 afterEach(() => {
   clearAuthSession();
+  vi.unstubAllEnvs();
   vi.unstubAllGlobals();
 });
 
@@ -68,6 +69,21 @@ describe("auth headers", () => {
     expect(headers.get("authorization")).toBe("Bearer jwt_1");
     expect(headers.get("x-barbershop-slug")).toBe("niche-72");
     expect(headers.get("accept")).toBe("application/json");
+  });
+
+  it("prefixes API requests with VITE_API_BASE_URL when configured", async () => {
+    vi.stubEnv("VITE_API_BASE_URL", "https://clipper-api.up.railway.app/");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(new Response(null, { status: 204 })),
+    );
+
+    await authFetch("/api/auth/me");
+
+    expect(fetch).toHaveBeenCalledWith(
+      "https://clipper-api.up.railway.app/api/auth/me",
+      expect.any(Object),
+    );
   });
 
   it("clears stale auth when an authenticated request returns 401", async () => {

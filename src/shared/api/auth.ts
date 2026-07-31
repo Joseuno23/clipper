@@ -1,3 +1,5 @@
+import { apiRequestInput, apiUrl } from "./baseUrl";
+
 const AUTH_TOKEN_KEY = "clipper.auth.token";
 const AUTH_SHOP_SLUG_KEY = "clipper.auth.shopSlug";
 
@@ -133,7 +135,7 @@ export async function authFetch(
   input: RequestInfo | URL,
   init: RequestInit = {},
 ) {
-  const response = await fetch(input, {
+  const response = await fetch(apiRequestInput(input), {
     ...init,
     headers: createAuthHeaders(init.headers),
   });
@@ -151,7 +153,7 @@ export async function login(input: {
   password: string;
 }): Promise<LoginResponse> {
   return readEnvelope<LoginResponse>(
-    await fetch("/api/auth/login", {
+    await fetch(apiUrl("/api/auth/login"), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input),
