@@ -33,7 +33,8 @@ Deploy Clipper as two services: Vercel serves the Vite app, Railway serves the N
 
 1. Import the same GitHub repo in Vercel.
 2. Keep the default Vite build command: `npm run build`.
-3. Set Vercel variables:
+3. Keep `.vercelignore` committed so Vercel ignores the root `api/` handlers. The API runs on Railway, not Vercel Functions.
+4. Set Vercel variables:
 
 | Variable            | Value                                                                                               |
 | ------------------- | --------------------------------------------------------------------------------------------------- |
